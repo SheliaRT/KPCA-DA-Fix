@@ -1,0 +1,31 @@
+{
+  "result": "passed",
+  "seed": 46,
+  "source_file": "Data/TvsN/TCGA_BRCA_NvT_new.csv",
+  "target_file": "Data/TvsN/GSE45498_TvsN_official_200.csv",
+  "source_file_sha256": "dfd99d30eb4da8de0978992823d15191993a6a4472808ca2ccf761dd5cd3d33b",
+  "target_file_sha256": "513fe732df4cedff0caaf40d5520a2c1c299e6afd2773008ebac5c0a8c830608",
+  "source_patient_count": 544,
+  "target_patient_count": 158,
+  "split_counts": {
+    "fit_sample_counts": {
+      "source_train": 471,
+      "target_adaptation": 139
+    },
+    "excluded_from_fit": {
+      "source_validation": 118,
+      "target_test": 61
+    },
+    "source_batch_id": "source",
+    "target_batch_id": "target",
+    "shared_gene_count": 228,
+    "gene_order_policy": "one-to-one shared genes in source order; first duplicate row retained",
+    "target_labels_used": false
+  },
+  "shared_genes": 228,
+  "target_test_batch_id": "target",
+  "mean_abs_gene_standardized_shift_before": 1.0476020048920884,
+  "mean_abs_gene_standardized_shift_after": 0.01485625663770069,
+  "corrected_values_finite": true,
+  "note": "ComBat was fit only on source train and target adaptation. This preflight does not train or score a classifier."
+}

@@ -1,0 +1,211 @@
+{
+  "valid_aggregation": true,
+  "seeds": [
+    46,
+    47
+  ],
+  "pair_count": 2,
+  "comparison_arm": "kpcada",
+  "cohort_sha256": {
+    "source": "dfd99d30eb4da8de0978992823d15191993a6a4472808ca2ccf761dd5cd3d33b",
+    "target": "513fe732df4cedff0caaf40d5520a2c1c299e6afd2773008ebac5c0a8c830608"
+  },
+  "matched_settings": {
+    "source_validation_size": 0.2,
+    "target_test_size": 0.3,
+    "variance_percentile": 30.0,
+    "feature_scope": "all",
+    "image_size": 227,
+    "model": "resnet50d",
+    "classifier_epochs": 100,
+    "early_stopping_patience": 10,
+    "scheduler_patience": 3,
+    "classifier_lr": 0.0001,
+    "weight_decay": 0.001,
+    "batch_size": 16,
+    "no_pretrained": false,
+    "source_validation_threshold": false,
+    "clip_scaled_values": false,
+    "align_shared_genes": false,
+    "anchor_shared_pixels": false
+  },
+  "adaptation_configuration": {
+    "regularization_mode": "trace",
+    "effective_alignment_weight": 1.0,
+    "kpca_epochs": 500,
+    "kpca_lr": 0.001,
+    "kpca_gamma": 0.2,
+    "lambda_reg_setting": null,
+    "lambda_grid_setting": null,
+    "align_shared_genes": false,
+    "anchor_shared_pixels": false,
+    "alignment_weight_note": "Missing weights in early artifacts are interpreted as 1.0 because their archived objective was MMD + lambda * regularizer."
+  },
+  "arm_metrics_across_seeds": {
+    "baseline": {
+      "accuracy": {
+        "mean": 0.22765732416710735,
+        "sample_sd": 0.0026175290683796127,
+        "minimum": 0.22580645161290322,
+        "maximum": 0.22950819672131148
+      },
+      "balanced_accuracy": {
+        "mean": 0.48226550235478804,
+        "sample_sd": 0.039511117728192595,
+        "minimum": 0.4543269230769231,
+        "maximum": 0.5102040816326531
+      },
+      "macro_f1": {
+        "mean": 0.2058498695578269,
+        "sample_sd": 0.014388482974351614,
+        "minimum": 0.19567567567567568,
+        "maximum": 0.2160240634399781
+      },
+      "sensitivity": {
+        "mean": 0.04145408163265306,
+        "sample_sd": 0.02976342318769907,
+        "minimum": 0.02040816326530612,
+        "maximum": 0.0625
+      },
+      "specificity": {
+        "mean": 0.9230769230769231,
+        "sample_sd": 0.10878565864408424,
+        "minimum": 0.8461538461538461,
+        "maximum": 1.0
+      },
+      "sensitivity_by_class": {
+        "0": {
+          "mean": 0.9230769230769231,
+          "sample_sd": 0.10878565864408424,
+          "minimum": 0.8461538461538461,
+          "maximum": 1.0
+        },
+        "1": {
+          "mean": 0.04145408163265306,
+          "sample_sd": 0.02976342318769907,
+          "minimum": 0.02040816326530612,
+          "maximum": 0.0625
+        }
+      }
+    },
+    "adapted": {
+      "accuracy": {
+        "mean": 0.5200951877313591,
+        "sample_sd": 0.0400108014738025,
+        "minimum": 0.4918032786885246,
+        "maximum": 0.5483870967741935
+      },
+      "balanced_accuracy": {
+        "mean": 0.5122236394557823,
+        "sample_sd": 0.15382393887566462,
+        "minimum": 0.40345368916797486,
+        "maximum": 0.6209935897435898
+      },
+      "macro_f1": {
+        "mean": 0.44661778780421113,
+        "sample_sd": 0.05132421554038946,
+        "minimum": 0.41032608695652173,
+        "maximum": 0.4829094886519005
+      },
+      "sensitivity": {
+        "mean": 0.5244472789115646,
+        "sample_sd": 0.18188758614704983,
+        "minimum": 0.3958333333333333,
+        "maximum": 0.6530612244897959
+      },
+      "specificity": {
+        "mean": 0.5,
+        "sample_sd": 0.48953546389837904,
+        "minimum": 0.15384615384615385,
+        "maximum": 0.8461538461538461
+      },
+      "sensitivity_by_class": {
+        "0": {
+          "mean": 0.5,
+          "sample_sd": 0.48953546389837904,
+          "minimum": 0.15384615384615385,
+          "maximum": 0.8461538461538461
+        },
+        "1": {
+          "mean": 0.5244472789115646,
+          "sample_sd": 0.18188758614704983,
+          "minimum": 0.3958333333333333,
+          "maximum": 0.6530612244897959
+        }
+      }
+    }
+  },
+  "adapted_minus_baseline_across_seeds": {
+    "accuracy": {
+      "mean": 0.29243786356425167,
+      "sample_sd": 0.04262833054218212,
+      "minimum": 0.2622950819672131,
+      "maximum": 0.32258064516129026,
+      "improved_seeds": 2,
+      "total_seeds": 2
+    },
+    "balanced_accuracy": {
+      "mean": 0.029958137100994237,
+      "sample_sd": 0.19333505660385722,
+      "minimum": -0.10675039246467821,
+      "maximum": 0.16666666666666669,
+      "improved_seeds": 1,
+      "total_seeds": 2
+    },
+    "macro_f1": {
+      "mean": 0.24076791824638422,
+      "sample_sd": 0.03693573256603785,
+      "minimum": 0.21465041128084605,
+      "maximum": 0.2668854252119224,
+      "improved_seeds": 2,
+      "total_seeds": 2
+    },
+    "sensitivity": {
+      "mean": 0.48299319727891155,
+      "sample_sd": 0.21165100933474887,
+      "minimum": 0.3333333333333333,
+      "maximum": 0.6326530612244897,
+      "improved_seeds": 2,
+      "total_seeds": 2
+    },
+    "specificity": {
+      "mean": -0.4230769230769231,
+      "sample_sd": 0.5983211225424633,
+      "minimum": -0.8461538461538461,
+      "maximum": 0.0,
+      "improved_seeds": 0,
+      "total_seeds": 2
+    },
+    "sensitivity_by_class:0": {
+      "mean": -0.4230769230769231,
+      "sample_sd": 0.5983211225424633,
+      "minimum": -0.8461538461538461,
+      "maximum": 0.0,
+      "improved_seeds": 0,
+      "total_seeds": 2
+    },
+    "sensitivity_by_class:1": {
+      "mean": 0.48299319727891155,
+      "sample_sd": 0.21165100933474887,
+      "minimum": 0.3333333333333333,
+      "maximum": 0.6326530612244897,
+      "improved_seeds": 2,
+      "total_seeds": 2
+    }
+  },
+  "interpretation": "Descriptive variability across these fitted splits/seeds. It does not estimate uncertainty over new cohorts; do not select settings using these target metrics and then call the same runs an untouched test.",
+  "comparison_refresh_jobs": {
+    "refresh_seed46_weight_provenance": {
+      "job": "refresh_seed46_weight_provenance",
+      "exit_code": 0,
+      "completed_utc": "2026-10-16T18:34:45+00:00",
+      "log": "audit/refresh_seed46_weight_provenance.log"
+    },
+    "refresh_seed47_weight_provenance": {
+      "job": "refresh_seed47_weight_provenance",
+      "exit_code": 0,
+      "completed_utc": "2026-10-16T18:34:45+00:00",
+      "log": "audit/refresh_seed47_weight_provenance.log"
+    }
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "expression_path": "Data/Survival_TCGA_VS_Desmd/TCGA_BRCA_NvT_v2.csv",
+  "expression_sha256": "cc0e0d85d82e8e6eeb48e0ae1926814a0826465b1b7be5c1e8df0ce1f688f1b1",
+  "label_path": "Data/Survival_TCGA_VS_Desmd/org_tcga_tvn.csv",
+  "label_sha256": "7f104aed0534e69a75eb7a22696fcbfb48888a39a1987e712bbf24c42411b75c",
+  "sample_count": 250,
+  "label_count": 250,
+  "sample_type_counts": {
+    "01": 136,
+    "11": 112,
+    "06": 2
+  },
+  "label_counts": {
+    "0": 138,
+    "1": 112
+  },
+  "labels_by_sample_type": {
+    "01": {
+      "0": 136
+    },
+    "11": {
+      "1": 112
+    },
+    "06": {
+      "0": 2
+    }
+  },
+  "tvsn_order_matches": 250,
+  "tvsn_order_match_fraction": 1.0,
+  "tvsn_mismatches": [],
+  "interpretation": "The row-aligned vector encodes TCGA sample type (0 for primary/other tumor-coded types, 1 for normal), not a survival outcome. Do not use it as TCGA aggressive/indolent labels."
+}

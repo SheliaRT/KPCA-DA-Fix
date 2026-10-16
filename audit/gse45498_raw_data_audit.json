@@ -1,0 +1,35 @@
+{
+  "source_url": "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE45nnn/GSE45498/suppl/GSE45498_raw_data.txt.gz",
+  "sha256": "b15687c693a5117c30595d12409a08679ae5e823005b87b6d918db60ae2569b7",
+  "compressed_bytes": 261942,
+  "format": "tab-separated NanoString raw data",
+  "sample_count": 282,
+  "sample_class_counts_from_column_names": {
+    "Mets": 54,
+    "Normal": 59,
+    "Tumor": 169
+  },
+  "row_count": 753,
+  "feature_class_counts": {
+    "Endogenous1": 654,
+    "Endogenous2": 80,
+    "Housekeeping": 5,
+    "Negative": 8,
+    "Positive": 6
+  },
+  "endogenous_feature_count": 734,
+  "endogenous_accession_prefixes": [
+    "nmiR"
+  ],
+  "example_endogenous_names": [
+    "hsa-let-7a",
+    "hsa-let-7b",
+    "hsa-let-7c",
+    "hsa-let-7d",
+    "hsa-let-7e",
+    "hsa-let-7f",
+    "hsa-let-7g",
+    "hsa-let-7i"
+  ],
+  "assessment": "This supplement contains microRNA nmiR features, not GPL16299 mRNA expression values. Do not transfer its 224-sample miRNA cohort count to the mRNA classification cohort or use these values to infer missing mRNA measurements."
+}

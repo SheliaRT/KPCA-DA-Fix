@@ -1,58 +1,105 @@
+import hashlib
 import torch
 import torch.optim as optim
 import pandas as pd
 import numpy as np
+from pathlib import Path
+import sys
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import KernelPCA
 from sklearn.neighbors import KNeighborsClassifier
 from typing import Any, Dict, List, Optional, Tuple
 
 
-DEFAULT_SOURCE_PATH = r"C:\Zmyfiles\codes\research\KPCA-DA\KPCA-DA\examples\data\TvsN\TCGA_BRCA_NvT.csv"
-DEFAULT_TARGET_PATH = r"C:\Zmyfiles\codes\research\KPCA-DA\KPCA-DA\examples\data\TvsN\GSE45498_NvT.csv"
+_REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_SOURCE_PATH = str(_REPOSITORY_ROOT / "Data" / "TvsN" / "TCGA_BRCA_NvT_new.csv")
+DEFAULT_TARGET_PATH = str(_REPOSITORY_ROOT / "Data" / "TvsN" / "GSE45498_TvsN_official_200.csv")
+
+
+def _fit_signature(X_source: np.ndarray, X_target: np.ndarray,
+                   genes_source: np.ndarray, genes_target: np.ndarray) -> str:
+    digest = hashlib.sha256()
+    for value in (X_source, X_target, genes_source, genes_target):
+        array = np.ascontiguousarray(value)
+        digest.update(str(array.shape).encode("ascii"))
+        digest.update(array.dtype.str.encode("ascii"))
+        if array.dtype.kind in "OUS":
+            digest.update(repr(array.tolist()).encode("utf-8"))
+        else:
+            digest.update(array.view(np.uint8))
+    return digest.hexdigest()
 
 
 def load_expression_matrix(csv_path: str) -> Tuple[np.ndarray, np.ndarray]:
-    """Load and reshape the expression matrix from disk, returning data and gene names."""
+    """Load gene-by-patient expression data and ordered gene identifiers."""
+    X, genes, _, _ = load_expression_dataset(csv_path)
+    return X, genes
+
+
+def load_expression_dataset(
+    csv_path: str, *, include_labels: bool = True
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Optional[np.ndarray]]:
+    """Load expression, gene IDs, patient IDs, and labels from the CSV layout.
+
+    Returns expression as genes x patients, matching the KPCA-DA API. Patient
+    IDs are preserved so callers can split original people before processing.
+    Set ``include_labels=False`` for unlabeled target inference/preflight; the
+    label column is omitted from the feature matrix and is not materialized as
+    a label array.
+    """
     expr = pd.read_csv(csv_path, encoding="utf-8", engine="python")
     expr = expr.transpose()
     expr.columns = expr.iloc[0]
-    matrix = expr.iloc[1:, 0:-1].astype(float).values
+    samples = expr.index[1:].to_numpy()
+    matrix = expr.iloc[1:, 0:-1].astype(float).values.T
     genes = expr.iloc[:, :-1].columns.to_numpy()
-    return matrix.T, genes
+    labels = expr.iloc[1:, -1].to_numpy() if include_labels else None
+    return matrix, genes, samples, labels
 
 
 def load_labels(csv_path: str) -> np.ndarray:
     """Extract sample labels from the last column of the expression CSV."""
-    expr = pd.read_csv(csv_path, encoding="utf-8", engine="python")
-    expr = expr.transpose()
-    expr.columns = expr.iloc[0]
-    return expr.iloc[1:, -1].values
+    return load_expression_dataset(csv_path)[3]
 
 
 def standardize_datasets(X_source: np.ndarray, X_target: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-    """Standardize source and target datasets independently."""
+    """Fit feature scaling on source rows and apply it to target rows.
+
+    The arrays must have the same ordered features. Use gene-aware preparation
+    when the domains have different feature sets.
+    """
+    if X_source.ndim != 2 or X_target.ndim != 2:
+        raise ValueError("Source and target arrays must be two-dimensional")
+    if X_source.shape[1] != X_target.shape[1]:
+        raise ValueError("Source-fitted scaling requires matching feature counts")
     scaler = StandardScaler()
     X_source_scaled = scaler.fit_transform(X_source)
-    X_target_scaled = scaler.fit_transform(X_target)
+    X_target_scaled = scaler.transform(X_target)
     return X_source_scaled, X_target_scaled
 
 
 def find_common_gene_indices(genes_source: np.ndarray, genes_target: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-    """Find common genes between source and target datasets and return their indices."""
-    common_genes = []
-    for gene_s in genes_source:
-        for gene_t in genes_target:
-            if gene_s == gene_t:
-                common_genes.append(gene_s)
-    
-    condition_source = np.isin(genes_source, common_genes)
-    index_source = np.where(condition_source)[0]
-    
-    condition_target = np.isin(genes_target, common_genes)
-    index_target = np.where(condition_target)[0]
-    
-    return index_source, index_target
+    """Return one-to-one shared-gene indices, ordered by source gene ID.
+
+    When an input contains duplicate gene identifiers, only the first row for
+    each ID participates in the paired MMD term. The full embeddings remain in
+    the preservation penalty.
+    """
+    target_first = {}
+    for idx, gene in enumerate(np.asarray(genes_target, dtype=object).tolist()):
+        target_first.setdefault(gene, idx)
+    source_seen = set()
+    source_idx, target_idx = [], []
+    for idx, gene in enumerate(np.asarray(genes_source, dtype=object).tolist()):
+        if gene in source_seen:
+            continue
+        source_seen.add(gene)
+        if gene in target_first:
+            source_idx.append(idx)
+            target_idx.append(target_first[gene])
+    if not source_idx:
+        raise ValueError("No shared gene identifiers found between the domains")
+    return np.asarray(source_idx, dtype=int), np.asarray(target_idx, dtype=int)
 
 
 def rbf_kernel(x: torch.Tensor, y: torch.Tensor, gamma: float = 1.0) -> torch.Tensor:
@@ -73,19 +120,81 @@ def compute_median_gamma(Zs: torch.Tensor, Zt: torch.Tensor) -> float:
 
 
 def mmd_loss(Zs_common: torch.Tensor, Zt_common: torch.Tensor, gamma: float = 1.0) -> torch.Tensor:
-    """Modified MMD loss using only K_tt and K_st terms."""
+    """Biased empirical squared MMD for an RBF kernel (main paper Eq. 15)."""
+    K_ss = rbf_kernel(Zs_common, Zs_common, gamma)
     K_tt = rbf_kernel(Zt_common, Zt_common, gamma)
     K_st = rbf_kernel(Zs_common, Zt_common, gamma)
-    
-    # Modified MMD: abs(K_tt.mean() - 2 * K_st.mean())
-    mmd = torch.abs(K_tt.mean() - 2 * K_st.mean())
-    return mmd
+    return K_ss.mean() + K_tt.mean() - 2.0 * K_st.mean()
 
 
 def regularization_term(Z_t: torch.Tensor, X_t: torch.Tensor, gamma: float = 1.0) -> torch.Tensor:
     K_t = rbf_kernel(X_t.T, X_t.T, gamma)
     A = Z_t.T @ K_t @ Z_t
     return torch.trace(A)
+
+
+def reference_preservation_term(Z_t: torch.Tensor, Z_t_initial: torch.Tensor,
+                                eps: float = 1e-12) -> torch.Tensor:
+    """Normalized squared movement from the initial target gene coordinates."""
+    centered = Z_t_initial - Z_t_initial.mean(dim=0, keepdim=True)
+    reference_energy = centered.square().sum()
+    if reference_energy.detach().item() <= eps:
+        raise ValueError("Initial target embedding has no variance to preserve")
+    return (Z_t - Z_t_initial).square().sum() / reference_energy.clamp_min(eps)
+
+
+def align_target_embedding_to_source(
+    Z_source: np.ndarray,
+    Z_target: np.ndarray,
+    common_source_idx: np.ndarray,
+    common_target_idx: np.ndarray,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """Apply a label-free orthogonal Procrustes orientation using shared genes.
+
+    The mapping uses only paired gene identities and their initial KPCA
+    coordinates. It rotates/refects and translates the entire target embedding
+    so shared-gene positions are least-squares aligned before MMD optimization.
+    It does not scale distances. This is an optional method revision because
+    the manuscript does not specify this orientation-alignment step.
+    """
+    source = np.asarray(Z_source, dtype=float)
+    target = np.asarray(Z_target, dtype=float)
+    source_idx = np.asarray(common_source_idx, dtype=int)
+    target_idx = np.asarray(common_target_idx, dtype=int)
+    if source.ndim != 2 or target.ndim != 2 or source.shape[1] != target.shape[1]:
+        raise ValueError("Source and target embeddings must share a component dimension")
+    if source_idx.shape != target_idx.shape or source_idx.ndim != 1 or source_idx.size < 2:
+        raise ValueError("At least two paired shared genes are required for alignment")
+    if (np.any(source_idx < 0) or np.any(source_idx >= len(source))
+            or np.any(target_idx < 0) or np.any(target_idx >= len(target))):
+        raise ValueError("Shared-gene indices fall outside the embedding")
+    src_anchor = source[source_idx]
+    tgt_anchor = target[target_idx]
+    src_center = src_anchor.mean(axis=0)
+    tgt_center = tgt_anchor.mean(axis=0)
+    src_centered = src_anchor - src_center
+    tgt_centered = tgt_anchor - tgt_center
+    source_rank = int(np.linalg.matrix_rank(src_centered))
+    target_rank = int(np.linalg.matrix_rank(tgt_centered))
+    if source_rank == 0 or target_rank == 0:
+        raise ValueError("Shared-gene anchors must have nonzero coordinate variance")
+    u, singular_values, vt = np.linalg.svd(tgt_centered.T @ src_centered,
+                                           full_matrices=False)
+    rotation = u @ vt
+    aligned = (target - tgt_center) @ rotation + src_center
+    before_rmse = float(np.sqrt(np.mean(np.square(tgt_anchor - src_anchor))))
+    after_rmse = float(np.sqrt(np.mean(np.square(aligned[target_idx] - src_anchor))))
+    return aligned, {
+        "rotation": rotation.tolist(),
+        "source_anchor_center": src_center.tolist(),
+        "target_anchor_center": tgt_center.tolist(),
+        "singular_values": singular_values.tolist(),
+        "source_anchor_rank": source_rank,
+        "target_anchor_rank": target_rank,
+        "shared_gene_count": int(source_idx.size),
+        "paired_coordinate_rmse_before": before_rmse,
+        "paired_coordinate_rmse_after": after_rmse,
+    }
 
 
 def fit_transform(
@@ -100,8 +209,13 @@ def fit_transform(
     mmd_gamma: float = 0.5,
     auto_gamma: bool = True,
     lambda_reg: float = 0.01,
+    alignment_weight: float = 1.0,
     lr: float = 0.0001,
     epochs: int = 100,
+    regularization_mode: str = "reference",
+    kpca_random_state: int = 42,
+    align_shared_genes: bool = False,
+    initial_embeddings: Optional[Dict[str, Any]] = None,
     verbose: bool = False,
 ) -> Dict[str, Any]:
     """Align source and target domains using kernel PCA and MMD-based adaptation.
@@ -114,6 +228,8 @@ def fit_transform(
     # Find common gene indices
     if genes_source is None or genes_target is None:
         raise ValueError("genes_source and genes_target must be provided for gene-based matching")
+    if not np.isfinite(alignment_weight) or alignment_weight < 0:
+        raise ValueError("alignment_weight must be finite and nonnegative")
     
     common_source_idx, common_target_idx = find_common_gene_indices(genes_source, genes_target)
 
@@ -126,14 +242,37 @@ def fit_transform(
     X_source_scaled = X_source
     X_target_scaled = X_target
 
-    # Apply KPCA
-    kpca = KernelPCA(n_components=n_components, kernel=kernel, gamma=kpca_gamma)
-    Z_s_np = kpca.fit_transform(X_source_scaled)
-    Z_t_np = kpca.fit_transform(X_target_scaled)
+    # Fit KPCA once per domain. A tuning sweep may pass these fixed initial
+    # coordinates so candidate lambdas differ only in their regularization.
+    kpca_alignment = None
+    if initial_embeddings is None:
+        kpca_source = KernelPCA(n_components=n_components, kernel=kernel,
+                                gamma=kpca_gamma, random_state=kpca_random_state)
+        kpca_target = KernelPCA(n_components=n_components, kernel=kernel,
+                                gamma=kpca_gamma, random_state=kpca_random_state)
+        Z_s_np = kpca_source.fit_transform(X_source_scaled)
+        Z_t_np = kpca_target.fit_transform(X_target_scaled)
+        if align_shared_genes:
+            Z_t_np, kpca_alignment = align_target_embedding_to_source(
+                Z_s_np, Z_t_np, common_source_idx, common_target_idx
+            )
+    else:
+        kpca_source = initial_embeddings.get("kpca_source_model")
+        kpca_target = initial_embeddings.get("kpca_target_model")
+        if kpca_target is None:
+            # Backward compatibility for cached results created before the
+            # source/target estimator split.
+            kpca_target = initial_embeddings["kpca_model"]
+        Z_s_np = np.asarray(initial_embeddings["Z_s"])
+        Z_t_np = np.asarray(initial_embeddings["Z_t_initial"])
+        kpca_alignment = initial_embeddings.get("kpca_alignment")
+        if align_shared_genes and kpca_alignment is None:
+            raise ValueError("Cached initial embeddings do not include shared-gene alignment")
 
     # Convert to tensors
     Z_s = torch.tensor(Z_s_np, dtype=torch.float32)
     Z_t = torch.tensor(Z_t_np, dtype=torch.float32, requires_grad=True)
+    Z_t_initial = torch.tensor(Z_t_np, dtype=torch.float32)
     X_t_tensor = torch.tensor(X_target_scaled.T, dtype=torch.float32)
 
     # Auto-select MMD gamma from the initial embedding distances
@@ -148,9 +287,6 @@ def fit_transform(
     loss_history: List[float] = []
 
     for epoch in range(epochs):
-        # Detach and re-enable gradients (as in modified version)
-        Z_t = Z_t.detach().requires_grad_(True)
-        optimizer = optim.SGD([Z_t], lr=lr)  # Reinitialize optimizer with new Z_t
         optimizer.zero_grad()
 
         # Extract common points
@@ -159,27 +295,71 @@ def fit_transform(
 
         # Compute losses
         mmd = mmd_loss(Zs_common, Zt_common, gamma=mmd_gamma)
-        reg = regularization_term(Z_t, X_t_tensor, gamma=mmd_gamma)
-        loss = mmd + lambda_reg * reg
+        if regularization_mode == "reference":
+            reg = reference_preservation_term(Z_t, Z_t_initial)
+        elif regularization_mode == "trace":
+            reg = regularization_term(Z_t, X_t_tensor, gamma=mmd_gamma)
+        elif regularization_mode == "none":
+            reg = Z_t.new_zeros(())
+        else:
+            raise ValueError("regularization_mode must be 'reference', 'trace', or 'none'")
+        loss = alignment_weight * mmd + lambda_reg * reg
 
         # Backpropagate
-        loss.backward(retain_graph=True)
+        loss.backward()
         optimizer.step()
 
-        loss_history.append(loss.item())
+        # Log all terms at the same post-update endpoint returned to callers.
+        with torch.no_grad():
+            mmd_after = mmd_loss(Zs_common, Z_t[common_target_idx], gamma=mmd_gamma)
+            if regularization_mode == "reference":
+                reg_after = reference_preservation_term(Z_t, Z_t_initial)
+            elif regularization_mode == "trace":
+                reg_after = regularization_term(Z_t, X_t_tensor, gamma=mmd_gamma)
+            else:
+                reg_after = Z_t.new_zeros(())
+            loss_after = alignment_weight * mmd_after + lambda_reg * reg_after
+        loss_history.append(loss_after.item())
 
         if verbose and epoch % max(1, epochs // 10) == 0:
-            print(f"Epoch {epoch}, Loss: {loss.item():.4f}, MMD: {mmd.item():.4f}, Reg: {reg.item():.4f}")
+            print(f"Epoch {epoch}, Loss: {loss_after.item():.4f}, MMD: {mmd_after.item():.4f}, Reg: {reg_after.item():.4f}")
+
+    # Return all loss components at the exact coordinates serialized by the
+    # caller. This also covers the zero-epoch no-adaptation control.
+    with torch.no_grad():
+        final_mmd = mmd_loss(Z_s[common_source_idx], Z_t[common_target_idx],
+                             gamma=mmd_gamma)
+        if regularization_mode == "reference":
+            final_reg = reference_preservation_term(Z_t, Z_t_initial)
+        elif regularization_mode == "trace":
+            final_reg = regularization_term(Z_t, X_t_tensor, gamma=mmd_gamma)
+        else:
+            final_reg = Z_t.new_zeros(())
+        final_loss = alignment_weight * final_mmd + lambda_reg * final_reg
 
     return {
         "Z_s": Z_s.detach().numpy(),
         "Z_t": Z_t.detach().numpy(),
+        "Z_t_initial": Z_t_initial.numpy(),
         "common_source_idx": common_source_idx,
         "common_target_idx": common_target_idx,
         "loss_history": loss_history,
-        "kpca_model": kpca,
+        # Preserve both independent fits. `kpca_model` remains the historical
+        # target-model alias used by existing callers.
+        "kpca_model": kpca_target,
+        "kpca_source_model": kpca_source,
+        "kpca_target_model": kpca_target,
+        "kpca_alignment": kpca_alignment,
         "common_genes_count": len(common_source_idx),
         "mmd_gamma": mmd_gamma,
+        "regularization_mode": regularization_mode,
+        "lambda_reg": lambda_reg,
+        "alignment_weight": alignment_weight,
+        "learning_rate": lr,
+        "epochs": epochs,
+        "final_mmd": final_mmd.item(),
+        "final_regularization": final_reg.item(),
+        "final_loss": final_loss.item(),
     }
 
 
@@ -198,8 +378,12 @@ class KPCA_DA:
         mmd_gamma: float = 0.5,
         auto_gamma: bool = True,
         lambda_reg: float = 0.01,
+        alignment_weight: float = 1.0,
         lr: float = 0.0001,
         epochs: int = 100,
+        regularization_mode: str = "reference",
+        kpca_random_state: int = 42,
+        align_shared_genes: bool = False,
         verbose: bool = False,
     ):
         """Initialize KPCA_DA model.
@@ -222,6 +406,9 @@ class KPCA_DA:
             Learning rate for optimization
         epochs : int, default=100
             Number of optimization epochs
+        regularization_mode : str, default='reference'
+            Target-coordinate penalty: normalized movement from initial coordinates
+            ('reference'), historical trace penalty ('trace'), or no penalty ('none').
         verbose : bool, default=False
             Whether to print progress
         """
@@ -231,16 +418,25 @@ class KPCA_DA:
         self.mmd_gamma = mmd_gamma
         self.auto_gamma = auto_gamma
         self.lambda_reg = lambda_reg
+        self.alignment_weight = alignment_weight
         self.lr = lr
         self.epochs = epochs
+        self.regularization_mode = regularization_mode
+        self.kpca_random_state = kpca_random_state
+        self.align_shared_genes = align_shared_genes
         self.verbose = verbose
         
         self.kpca_model = None
+        self.kpca_source_model_ = None
+        self.kpca_target_model_ = None
         self.Z_s_ = None
         self.Z_t_ = None
+        self.Z_t_initial_ = None
         self.common_source_idx_ = None
         self.common_target_idx_ = None
         self.loss_history_ = None
+        self._tuned_fit_result = None
+        self._tuned_fit_signature = None
     
     def fit_transform(
         self,
@@ -269,29 +465,55 @@ class KPCA_DA:
         Z_t : np.ndarray
             Adapted target data
         """
-        results = fit_transform(
-            X_source=X_source,
-            X_target=X_target,
-            genes_source=genes_source,
-            genes_target=genes_target,
-            n_components=self.n_components,
-            kernel=self.kernel,
-            kpca_gamma=self.kpca_gamma,
-            mmd_gamma=self.mmd_gamma,
-            auto_gamma=self.auto_gamma,
-            lambda_reg=self.lambda_reg,
-            lr=self.lr,
-            epochs=self.epochs,
-            verbose=self.verbose,
-        )
+        if genes_source is None or genes_target is None:
+            raise ValueError("genes_source and genes_target must be provided for gene-based matching")
+        signature = _fit_signature(X_source, X_target, genes_source, genes_target)
+        if (self._tuned_fit_result is not None
+                and signature == self._tuned_fit_signature):
+            results = self._tuned_fit_result
+        else:
+            results = fit_transform(
+                X_source=X_source,
+                X_target=X_target,
+                genes_source=genes_source,
+                genes_target=genes_target,
+                n_components=self.n_components,
+                kernel=self.kernel,
+                kpca_gamma=self.kpca_gamma,
+                mmd_gamma=self.mmd_gamma,
+                auto_gamma=self.auto_gamma,
+                lambda_reg=self.lambda_reg,
+                alignment_weight=self.alignment_weight,
+                lr=self.lr,
+                epochs=self.epochs,
+                regularization_mode=self.regularization_mode,
+                kpca_random_state=self.kpca_random_state,
+                align_shared_genes=self.align_shared_genes,
+                verbose=self.verbose,
+            )
+        self._tuned_fit_result = None
+        self._tuned_fit_signature = None
         
         # Store results
         self.Z_s_ = results["Z_s"]
         self.Z_t_ = results["Z_t"]
+        self.Z_t_initial_ = results["Z_t_initial"]
         self.common_source_idx_ = results["common_source_idx"]
         self.common_target_idx_ = results["common_target_idx"]
         self.loss_history_ = results["loss_history"]
+        self.mmd_gamma_ = results["mmd_gamma"]
+        self.final_mmd_ = results["final_mmd"]
+        self.final_regularization_ = results["final_regularization"]
+        self.final_loss_ = results["final_loss"]
+        self.lambda_reg_ = results["lambda_reg"]
+        self.alignment_weight_ = results["alignment_weight"]
+        self.regularization_mode_ = results["regularization_mode"]
+        self.optimization_epochs_ = results["epochs"]
+        self.optimization_lr_ = results["learning_rate"]
         self.kpca_model = results["kpca_model"]
+        self.kpca_source_model_ = results.get("kpca_source_model")
+        self.kpca_target_model_ = results.get("kpca_target_model", self.kpca_model)
+        self.kpca_alignment_ = results.get("kpca_alignment")
         
         return self.Z_s_, self.Z_t_
     
@@ -305,8 +527,9 @@ class KPCA_DA:
         y_source: Optional[np.ndarray] = None,
         y_target: Optional[np.ndarray] = None,
         classifier=None,
+        allow_target_label_selection: bool = False,
     ) -> Dict[str, Any]:
-        """Grid-search lambda_reg and report MMD and accuracy for each value.
+        """Grid-search lambda_reg; target-label accuracy selection is opt-in.
 
         See module-level tune_lambda() for full parameter documentation.
         Returns the summary dict and sets self.lambda_reg to the best value
@@ -325,25 +548,48 @@ class KPCA_DA:
             y_source=y_source,
             y_target=y_target,
             classifier=classifier,
+            allow_target_label_selection=allow_target_label_selection,
             n_components=self.n_components,
             kernel=self.kernel,
             kpca_gamma=self.kpca_gamma,
             mmd_gamma=self.mmd_gamma,
             auto_gamma=self.auto_gamma,
+            alignment_weight=self.alignment_weight,
             lr=self.lr,
             epochs=self.epochs,
+            regularization_mode=self.regularization_mode,
+            kpca_random_state=self.kpca_random_state,
+            align_shared_genes=self.align_shared_genes,
             verbose=self.verbose,
         )
         if y_source is not None and y_target is not None:
-            self.lambda_reg = summary["best_lambda_accuracy"]
+            selected_lambda = float(summary["best_lambda_accuracy"])
         else:
-            self.lambda_reg = summary["best_lambda_mmd"]
+            selected_lambda = float(summary["best_lambda_mmd"])
+        self.lambda_reg = selected_lambda
         self.mmd_gamma = summary["mmd_gamma"]
         self.auto_gamma = False
+        self._tuned_fit_result = summary["_fit_results_by_lambda"][selected_lambda]
+        self._tuned_fit_signature = _fit_signature(
+            X_source, X_target, genes_source, genes_target
+        )
+        summary.pop("_fit_results_by_lambda")
         return summary
 
     def transform(self, X: np.ndarray) -> np.ndarray:
-        """Transform new data using fitted KPCA model.
+        """Compatibility alias for :meth:`transform_target_genes_unadapted`.
+
+        This method keeps the historical estimator-style API. It does not
+        perform patient inference or return the optimized target coordinates.
+        """
+        return self.transform_target_genes_unadapted(X)
+
+    def transform_target_genes_unadapted(self, X: np.ndarray) -> np.ndarray:
+        """Project target gene rows with the frozen, unadapted target KPCA fit.
+
+        This does not return the optimized target coordinates from ``Z_t_``
+        and is not patient-image inference. For patient inference, use the
+        fitted image transformer's frozen target gene-to-pixel map.
         
         Parameters
         ----------
@@ -355,10 +601,20 @@ class KPCA_DA:
         Z : np.ndarray
             Transformed data
         """
-        if self.kpca_model is None:
+        if self.kpca_target_model_ is None:
             raise ValueError("Model has not been fitted yet. Call fit_transform first.")
         
-        return self.kpca_model.transform(X)
+        return self.kpca_target_model_.transform(X)
+
+    def transform_source(self, X: np.ndarray) -> np.ndarray:
+        """Project gene profiles with the independently fitted source KPCA.
+
+        The input must have the source KPCA training feature dimension. This
+        projects gene profiles; it is not inference for a new patient sample.
+        """
+        if self.kpca_source_model_ is None:
+            raise ValueError("Model has not been fitted with a source KPCA estimator")
+        return self.kpca_source_model_.transform(X)
 
 
 def tune_lambda(
@@ -376,8 +632,13 @@ def tune_lambda(
     kpca_gamma: Optional[float] = None,
     mmd_gamma: float = 0.5,
     auto_gamma: bool = True,
+    alignment_weight: float = 1.0,
     lr: float = 0.0001,
     epochs: int = 100,
+    regularization_mode: str = "reference",
+    allow_target_label_selection: bool = False,
+    kpca_random_state: int = 42,
+    align_shared_genes: bool = False,
     verbose: bool = False,
 ) -> Dict[str, Any]:
     """Search over lambda_values and report final MMD and (optionally) accuracy for each.
@@ -387,7 +648,8 @@ def tune_lambda(
     lambda_values : sequence of float
         Candidate regularization strengths to evaluate.
     y_source, y_target : array-like or None
-        Class labels for source and target. Required for accuracy reporting.
+        Optional labels for a separately reported supervised diagnostic. They
+        cannot select lambda unless ``allow_target_label_selection=True``.
     classifier : sklearn-compatible estimator or None
         Trained/fitted on source KPCA embeddings and evaluated on adapted target.
         Defaults to KNeighborsClassifier(n_neighbors=5) when labels are supplied.
@@ -402,18 +664,47 @@ def tune_lambda(
         "results_df"  — pandas DataFrame summary
     """
     use_accuracy = y_source is not None and y_target is not None
+    if use_accuracy and not allow_target_label_selection:
+        raise ValueError(
+            "Target labels cannot select adaptation strength in the unsupervised "
+            "protocol. Set allow_target_label_selection=True only for a separately "
+            "reported supervised development experiment."
+        )
+    if (y_source is None) != (y_target is None):
+        raise ValueError("Supply both label arrays for supervised diagnostics, or neither")
+    if not np.isfinite(alignment_weight) or alignment_weight < 0:
+        raise ValueError("alignment_weight must be finite and nonnegative")
     if use_accuracy and classifier is None:
         classifier = KNeighborsClassifier(n_neighbors=5)
 
-    # Compute gamma once from the initial embeddings so it is identical across
-    # all lambda runs. Re-fitting KPCA inside each fit_transform call can
-    # produce small numerical differences (eigenvector sign flips, reordering)
-    # that shift the embedding coordinates and change the median distance.
+    lambda_values = tuple(float(value) for value in lambda_values)
+    if not lambda_values or not np.isfinite(lambda_values).all() or min(lambda_values) < 0:
+        raise ValueError("lambda_values must be a non-empty sequence of finite nonnegative values")
+
+    # Fit KPCA only once. Every candidate then starts from identical embeddings
+    # and uses the same MMD bandwidth, eliminating candidate-specific solver
+    # sign/order differences.
+    kpca_source_init = KernelPCA(n_components=n_components, kernel=kernel,
+                                 gamma=kpca_gamma, random_state=kpca_random_state)
+    kpca_target_init = KernelPCA(n_components=n_components, kernel=kernel,
+                                 gamma=kpca_gamma, random_state=kpca_random_state)
+    Z_s_init = kpca_source_init.fit_transform(X_source)
+    Z_t_init = kpca_target_init.fit_transform(X_target)
+    common_src_init, common_tgt_init = find_common_gene_indices(genes_source, genes_target)
+    kpca_alignment = None
+    if align_shared_genes:
+        Z_t_init, kpca_alignment = align_target_embedding_to_source(
+            Z_s_init, Z_t_init, common_src_init, common_tgt_init
+        )
+    initial_embeddings = {
+        "Z_s": Z_s_init,
+        "Z_t_initial": Z_t_init,
+        "kpca_model": kpca_target_init,
+        "kpca_source_model": kpca_source_init,
+        "kpca_target_model": kpca_target_init,
+        "kpca_alignment": kpca_alignment,
+    }
     if auto_gamma:
-        kpca_init = KernelPCA(n_components=n_components, kernel=kernel, gamma=kpca_gamma)
-        Z_s_init = kpca_init.fit_transform(X_source)
-        Z_t_init = kpca_init.fit_transform(X_target)
-        common_src_init, common_tgt_init = find_common_gene_indices(genes_source, genes_target)
         mmd_gamma = compute_median_gamma(
             torch.tensor(Z_s_init[common_src_init], dtype=torch.float32),
             torch.tensor(Z_t_init[common_tgt_init], dtype=torch.float32),
@@ -422,6 +713,7 @@ def tune_lambda(
             print(f"Pre-computed MMD gamma (median heuristic, shared across all lambda): {mmd_gamma:.6f}")
 
     records = []
+    fit_results: dict[float, Dict[str, Any]] = {}
     for lam in lambda_values:
         if verbose:
             print(f"\n--- lambda = {lam} ---")
@@ -437,27 +729,34 @@ def tune_lambda(
             mmd_gamma=mmd_gamma,
             auto_gamma=False,   # already computed above; don't recompute per run
             lambda_reg=lam,
+            alignment_weight=alignment_weight,
             lr=lr,
             epochs=epochs,
+            regularization_mode=regularization_mode,
+            kpca_random_state=kpca_random_state,
+            align_shared_genes=align_shared_genes,
+            initial_embeddings=initial_embeddings,
             verbose=verbose,
         )
+        fit_results[lam] = res
 
         Z_s = res["Z_s"]
         Z_t = res["Z_t"]
         common_src = res["common_source_idx"]
         common_tgt = res["common_target_idx"]
 
-        # Final MMD (without regularization weight)
-        Zs_t = torch.tensor(Z_s[common_src], dtype=torch.float32)
-        Zt_t = torch.tensor(Z_t[common_tgt], dtype=torch.float32)
-        used_gamma = res["mmd_gamma"]   # actual gamma used during training
-        final_mmd = mmd_loss(Zs_t, Zt_t, gamma=used_gamma).item()
-        final_loss = res["loss_history"][-1]
+        final_mmd = res["final_mmd"]
+        final_reg = res["final_regularization"]
+        final_loss = res["final_loss"]
 
         record: Dict[str, Any] = {
             "lambda": lam,
             "final_mmd": final_mmd,
             "final_loss": final_loss,
+            "final_regularization": final_reg,
+            "final_loss_history_endpoint": (
+                res["loss_history"][-1] if res["loss_history"] else final_loss
+            ),
         }
 
         if use_accuracy:
@@ -486,6 +785,7 @@ def tune_lambda(
         "best_lambda_mmd": best_mmd_rec["lambda"],
         "results_df": pd.DataFrame(records),
         "mmd_gamma": mmd_gamma,
+        "_fit_results_by_lambda": fit_results,
     }
     if use_accuracy:
         best_acc_rec = max(records, key=lambda r: r["accuracy"])
@@ -495,48 +795,17 @@ def tune_lambda(
 
 
 def main() -> None:
-    # Load data with gene names
-    X_source, genes_source = load_expression_matrix(DEFAULT_SOURCE_PATH)
-    X_target, genes_target = load_expression_matrix(DEFAULT_TARGET_PATH)
+    """Delegate direct execution to the canonical, configurable experiment CLI.
 
-    # Using functional API
-    results = fit_transform(
-        X_source,
-        X_target,
-        genes_source=genes_source,
-        genes_target=genes_target,
-        n_components=2,
-        kernel="rbf",
-        kpca_gamma=0.5,
-        mmd_gamma=0.5,
-        lambda_reg=0.01,
-        lr=0.0001,
-        epochs=100,
-        verbose=True,
-    )
+    Keeping one runner prevents this API module from silently using legacy
+    cohort files and a second, incompatible set of training defaults.
+    """
+    script_dir = str(Path(__file__).resolve().parent)
+    if script_dir not in sys.path:
+        sys.path.insert(0, script_dir)
+    from run_tvsn_experiment import parse_args, run
 
-    print(f"\nCommon genes found: {results['common_genes_count']}")
-    print("Optimized Z_t shape:", results["Z_t"].shape)
-    
-    # Using class-based API
-    print("\n" + "="*50)
-    print("Using KPCA_DA class API:")
-    print("="*50)
-    
-    model = KPCA_DA(
-        n_components=2,
-        kernel="rbf",
-        kpca_gamma=0.5,
-        mmd_gamma=0.5,
-        lambda_reg=0.01,
-        lr=0.0001,
-        epochs=100,
-        verbose=True,
-    )
-    
-    Z_s, Z_t = model.fit_transform(X_source, X_target, genes_source, genes_target)
-    print(f"\nTransformed source shape: {Z_s.shape}")
-    print(f"Transformed target shape: {Z_t.shape}")
+    run(parse_args())
 
 
 if __name__ == "__main__":

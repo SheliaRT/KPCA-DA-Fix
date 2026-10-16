@@ -90,6 +90,7 @@ class DomainAdaptiveImageTransformer:
         # Store genes for reference
         self._genes_source = None
         self._genes_target = None
+        self._shared_gene_pixel_anchor_ = None
 
     @staticmethod
     def _parse_pixels(pixels: Union[int, Tuple[int, int]]) -> Tuple[int, int]:
@@ -126,7 +127,8 @@ class DomainAdaptiveImageTransformer:
 
     @classmethod
     def coordinate_binning(cls, position: np.ndarray,
-                           px_size: Tuple[int, int]) -> np.ndarray:
+                           px_size: Tuple[int, int],
+                           bounds: Optional[Tuple[np.ndarray, np.ndarray]] = None) -> np.ndarray:
         """Determine the pixel locations of each feature based on the overlap of
         feature position and pixel locations.
 
@@ -137,7 +139,7 @@ class DomainAdaptiveImageTransformer:
         Returns:
             a 2d array of feature to pixel mappings
         """
-        scaled = cls.scale_coordinates(position, px_size)
+        scaled = cls.scale_coordinates(position, px_size, bounds=bounds)
         px_binned = np.floor(scaled).astype(int)
         # Need to move maximum values into the lower bin
         px_binned[:, 0][px_binned[:, 0] == px_size[0]] = px_size[0] - 1
@@ -156,7 +158,8 @@ class DomainAdaptiveImageTransformer:
 
     @classmethod
     def coordinate_optimal_assignment(cls, position: np.ndarray,
-                                      px_size: Tuple[int, int]) -> np.ndarray:
+                                      px_size: Tuple[int, int],
+                                      bounds: Optional[Tuple[np.ndarray, np.ndarray]] = None) -> np.ndarray:
         """Determine the pixel location of each feature using a linear sum
         assignment problem solution on the exponential on the euclidean
         distances between the features and the pixels
@@ -168,7 +171,7 @@ class DomainAdaptiveImageTransformer:
         Returns:
             a 2d array of feature to pixel mappings
         """
-        scaled = cls.scale_coordinates(position, px_size)
+        scaled = cls.scale_coordinates(position, px_size, bounds=bounds)
         px_centers = cls.calculate_pixel_centroids(px_size)
 
         # calculate distances
@@ -190,16 +193,17 @@ class DomainAdaptiveImageTransformer:
             else:
                 j = i
             ki = lsa[1][j]
-            xi = ki % px_size[0]
-            yi = ki // px_size[0]
+            xi = ki % px_size[1]
+            yi = ki // px_size[1]
             px_assigned[i] = [yi, xi]
         return px_assigned
 
     @classmethod
     def coordinate_heuristic_assignment(cls, position: np.ndarray,
-                                        px_size: Tuple[int, int]) -> np.ndarray:
+                                        px_size: Tuple[int, int],
+                                        bounds: Optional[Tuple[np.ndarray, np.ndarray]] = None) -> np.ndarray:
 
-        scaled = cls.scale_coordinates(position, px_size)
+        scaled = cls.scale_coordinates(position, px_size, bounds=bounds)
         px_centers = cls.calculate_pixel_centroids(px_size)
 
         # calculate distances
@@ -222,8 +226,8 @@ class DomainAdaptiveImageTransformer:
             else:
                 j = i
             ki = lsa[1][j]
-            xi = ki % px_size[0]
-            yi = ki // px_size[0]
+            xi = ki % px_size[1]
+            yi = ki // px_size[1]
             px_assigned[i] = [yi, xi]
         return px_assigned
 
@@ -240,7 +244,8 @@ class DomainAdaptiveImageTransformer:
         px_map = np.empty((np.prod(px_size), 2))
         for i in range(0, px_size[0]):
             for j in range(0, px_size[1]):
-                px_map[i * px_size[0] + j] = [i, j]
+                # Flatten rows using the image width (column count).
+                px_map[i * px_size[1] + j] = [i, j]
         px_centroid = px_map + 0.5
         return px_centroid
 
@@ -364,7 +369,8 @@ class DomainAdaptiveImageTransformer:
             self._calculate_coords()
 
     @staticmethod
-    def scale_coordinates(coords: np.ndarray, dim_max: ArrayLike) -> np.ndarray:
+    def scale_coordinates(coords: np.ndarray, dim_max: ArrayLike,
+                          bounds: Optional[Tuple[np.ndarray, np.ndarray]] = None) -> np.ndarray:
         """Transforms a list of n-dimensional coordinates by scaling them
         between zero and the given dimensional maximum
 
@@ -375,9 +381,14 @@ class DomainAdaptiveImageTransformer:
         Returns:
             a 2d ndarray of scaled coordinates
         """
-        data_min = coords.min(axis=0)
-        data_max = coords.max(axis=0)
-        std = (coords - data_min) / (data_max - data_min)
+        if bounds is None:
+            data_min = coords.min(axis=0)
+            data_max = coords.max(axis=0)
+        else:
+            data_min, data_max = bounds
+        data_range = np.asarray(data_max) - np.asarray(data_min)
+        data_range = np.where(data_range == 0, 1.0, data_range)
+        std = (coords - data_min) / data_range
         scaled = np.multiply(std, dim_max)
         return scaled
 
@@ -385,13 +396,13 @@ class DomainAdaptiveImageTransformer:
         """Calculate the matrix coordinates of each feature based on the
         pixel dimensions for both source and target datasets.
         """
-        # Scale and discretize source coordinates
-        scaled_source = self.scale_coordinates(self._xrot_source, self._pixels)
-        self._coords_source = self._dm(scaled_source, self._pixels)
-        
-        # Scale and discretize target coordinates
-        scaled_target = self.scale_coordinates(self._xrot_target, self._pixels)
-        self._coords_target = self._dm(scaled_target, self._pixels)
+        # Both domains share one coordinate frame, so a location has the same
+        # pixel meaning in source and target images. Domain-specific min/max
+        # scaling here would independently stretch both clouds to fill the image.
+        combined = np.vstack((self._xrot_source, self._xrot_target))
+        bounds = (combined.min(axis=0), combined.max(axis=0))
+        self._coords_source = self._dm(self._xrot_source, self._pixels, bounds)
+        self._coords_target = self._dm(self._xrot_target, self._pixels, bounds)
 
     def transform_source(self, X_source: np.ndarray, img_format: str = 'rgb',
                         empty_value: int = 0) -> np.ndarray:
@@ -511,6 +522,29 @@ class DomainAdaptiveImageTransformer:
             ndarray: the pixel coordinates for target features
         """
         return self._coords_target.copy()
+
+    def anchor_shared_gene_pixels(self):
+        """Place each shared target gene at its source gene's pixel.
+
+        This label-free, post-fit option enforces feature identity in the image
+        representation. It is a method ablation: adapted coordinates for shared
+        target genes are not used for their final pixel locations. Target-private
+        genes retain their own fitted coordinates.
+        """
+        if self._coords_source.ndim != 2 or self._coords_target.ndim != 2:
+            raise RuntimeError("Fit the transformer before anchoring shared genes")
+        model = self._kpca_da
+        source_idx = np.asarray(model.common_source_idx_, dtype=int)
+        target_idx = np.asarray(model.common_target_idx_, dtype=int)
+        if source_idx.size == 0 or source_idx.shape != target_idx.shape:
+            raise ValueError("No one-to-one shared genes are available to anchor")
+        self._coords_target = self._coords_target.copy()
+        self._coords_target[target_idx] = self._coords_source[source_idx]
+        self._shared_gene_pixel_anchor_ = {
+            "applied": True,
+            "shared_gene_count": int(source_idx.size),
+        }
+        return self
 
     def feature_density_matrix_source(self) -> np.ndarray:
         """Generate image matrix with source feature counts per pixel

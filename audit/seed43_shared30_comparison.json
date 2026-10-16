@@ -1,0 +1,158 @@
+{
+  "valid_pair": true,
+  "seed": 43,
+  "source_patient_count": 235,
+  "target_patient_count": 160,
+  "target_test_samples": 55,
+  "target_test_patients": 48,
+  "matched_settings": {
+    "source_validation_size": 0.2,
+    "target_test_size": 0.3,
+    "variance_percentile": 30.0,
+    "feature_scope": "shared",
+    "image_size": 227,
+    "model": "resnet50d",
+    "classifier_epochs": 100,
+    "early_stopping_patience": 10,
+    "scheduler_patience": 3,
+    "classifier_lr": 0.0001,
+    "weight_decay": 0.001,
+    "batch_size": 16,
+    "no_pretrained": false,
+    "source_validation_threshold": false
+  },
+  "baseline": {
+    "best_epoch": 6,
+    "source_validation_balanced_accuracy": 1.0,
+    "test_metrics": {
+      "labels": [
+        0,
+        1
+      ],
+      "confusion_matrix": [
+        [
+          5,
+          9
+        ],
+        [
+          25,
+          16
+        ]
+      ],
+      "accuracy": 0.38181818181818183,
+      "balanced_accuracy": 0.37369337979094075,
+      "macro_f1": 0.3560606060606061,
+      "sensitivity_by_class": {
+        "0": 0.35714285714285715,
+        "1": 0.3902439024390244
+      },
+      "specificity_by_class": {
+        "0": 0.3902439024390244,
+        "1": 0.35714285714285715
+      },
+      "positive_label": 1,
+      "sensitivity": 0.3902439024390244,
+      "specificity": 0.35714285714285715
+    }
+  },
+  "adapted": {
+    "best_epoch": 8,
+    "source_validation_balanced_accuracy": 1.0,
+    "test_metrics": {
+      "labels": [
+        0,
+        1
+      ],
+      "confusion_matrix": [
+        [
+          1,
+          13
+        ],
+        [
+          2,
+          39
+        ]
+      ],
+      "accuracy": 0.7272727272727273,
+      "balanced_accuracy": 0.5113240418118467,
+      "macro_f1": 0.47817836812144215,
+      "sensitivity_by_class": {
+        "0": 0.07142857142857142,
+        "1": 0.9512195121951219
+      },
+      "specificity_by_class": {
+        "0": 0.9512195121951219,
+        "1": 0.07142857142857142
+      },
+      "positive_label": 1,
+      "sensitivity": 0.9512195121951219,
+      "specificity": 0.07142857142857142
+    },
+    "geometry_diagnostics": {
+      "target_normalized_squared_movement": 0.027795730582902613,
+      "target_variance_ratio_by_component": [
+        0.728316172307887,
+        0.7780578852068084
+      ],
+      "target_covariance_eigenvalues_initial": [
+        0.02745745682213136,
+        0.08793020573501525
+      ],
+      "target_covariance_eigenvalues_adapted": [
+        0.02113872700450276,
+        0.06426575465485332
+      ],
+      "target_pairwise_distance_spearman": 0.9917952939650575,
+      "source_gene_pixel_collisions": {
+        "genes": 221,
+        "occupied_pixels": 220,
+        "genes_in_collisions": 1,
+        "collision_fraction": 0.004524886877828055
+      },
+      "target_gene_pixel_collisions": {
+        "genes": 221,
+        "occupied_pixels": 99,
+        "genes_in_collisions": 122,
+        "collision_fraction": 0.5520361990950227
+      },
+      "shared_gene_same_pixel_fraction": 0.0
+    }
+  },
+  "test_metric_delta_adapted_minus_baseline": {
+    "accuracy": 0.34545454545454546,
+    "balanced_accuracy": 0.1376306620209059,
+    "macro_f1": 0.12211776206083608,
+    "sensitivity": 0.5609756097560975,
+    "specificity": -0.2857142857142857
+  },
+  "patient_cluster_bootstrap": {
+    "unit": "patient group; all rows from each sampled patient are retained",
+    "resamples_requested": 2000,
+    "resamples_used": 2000,
+    "random_state": 43,
+    "delta_95_percentile_interval": {
+      "accuracy": [
+        0.2,
+        0.490566037735849
+      ],
+      "balanced_accuracy": [
+        -0.01088191699604742,
+        0.2748691180093618
+      ],
+      "macro_f1": [
+        -0.005201901817884092,
+        0.25248078062168167
+      ],
+      "sensitivity": [
+        0.4,
+        0.7209302325581395
+      ],
+      "specificity": [
+        -0.5454545454545454,
+        -0.07142857142857142
+      ]
+    },
+    "scope_note": "Conditional on the fitted models and this held-out split; not uncertainty over training runs or new cohorts."
+  },
+  "interpretation": "One paired seed is a pilot; it does not establish paper-level performance."
+}

@@ -1,0 +1,174 @@
+{
+  "interpretation": "Inventory only. Matching the manuscript's count is not proof of the same inclusion criteria or an authoritative cohort.",
+  "paper_reported_sample_count": 592,
+  "candidates": [
+    {
+      "path": "Data/TvsN/TCGA_BRCA_NvT.csv",
+      "available": true,
+      "sha256": "cc0e0d85d82e8e6eeb48e0ae1926814a0826465b1b7be5c1e8df0ce1f688f1b1",
+      "header_columns": 251,
+      "sample_columns": 250,
+      "body_rows_including_label_row": 22490,
+      "last_row_label_counts": {
+        "Tumor": 138,
+        "Normal": 112
+      },
+      "tcga_sample_type_counts": {
+        "01": 136,
+        "06": 2,
+        "11": 112
+      },
+      "eligible_type_01_or_11_samples": 248,
+      "eligible_type_01_or_11_patient_count": 235,
+      "eligible_type_01_or_11_stored_label_counts": {
+        "Tumor": 136,
+        "Normal": 112
+      },
+      "unique_patient_count_all_tcga_barcodes": 235,
+      "duplicate_sample_id_count": 0,
+      "non_tcga_or_unparseable_sample_ids": [],
+      "rows_with_wrong_column_count": 0,
+      "label_row_first_cell": "Sample_Type"
+    },
+    {
+      "path": "Data/TvsN/TCGA_BRCA_NvT_new.csv",
+      "available": true,
+      "sha256": "dfd99d30eb4da8de0978992823d15191993a6a4472808ca2ccf761dd5cd3d33b",
+      "header_columns": 592,
+      "sample_columns": 591,
+      "body_rows_including_label_row": 22490,
+      "last_row_label_counts": {
+        "Tumor": 476,
+        "Normal": 113,
+        "Unknown": 2
+      },
+      "tcga_sample_type_counts": {
+        "01": 476,
+        "06": 2,
+        "11": 113
+      },
+      "eligible_type_01_or_11_samples": 589,
+      "eligible_type_01_or_11_patient_count": 544,
+      "eligible_type_01_or_11_stored_label_counts": {
+        "Tumor": 476,
+        "Normal": 113
+      },
+      "unique_patient_count_all_tcga_barcodes": 545,
+      "duplicate_sample_id_count": 0,
+      "non_tcga_or_unparseable_sample_ids": [],
+      "rows_with_wrong_column_count": 0,
+      "label_row_first_cell": "Sample_Type"
+    },
+    {
+      "path": "Data/TvsN/TCGA_BRCA_NvTv1_filtered.csv",
+      "available": true,
+      "sha256": "65df579c50ff14f78bad3a649e699f981d7f868dbaba715ac67f19cb7323ad3f",
+      "header_columns": 1212,
+      "sample_columns": 1211,
+      "body_rows_including_label_row": 22490,
+      "last_row_label_counts": {
+        "Tumor": 1091,
+        "Normal": 113,
+        "Unknown": 7
+      },
+      "tcga_sample_type_counts": {
+        "01": 1091,
+        "06": 7,
+        "11": 113
+      },
+      "eligible_type_01_or_11_samples": 1204,
+      "eligible_type_01_or_11_patient_count": 1092,
+      "eligible_type_01_or_11_stored_label_counts": {
+        "Tumor": 1091,
+        "Normal": 113
+      },
+      "unique_patient_count_all_tcga_barcodes": 1092,
+      "duplicate_sample_id_count": 0,
+      "non_tcga_or_unparseable_sample_ids": [],
+      "rows_with_wrong_column_count": 0,
+      "label_row_first_cell": "Sample_Type"
+    },
+    {
+      "path": "Data/Survival_TCGA_VS_Desmd/TCGA_BRCA_NvT.csv",
+      "available": true,
+      "sha256": "a285d6fe9c8b30db3daeafaa56ae75d29f1a361722746ae9ea8047bede1ef74e",
+      "header_columns": 1212,
+      "sample_columns": 1211,
+      "body_rows_including_label_row": 22490,
+      "last_row_label_counts": {
+        "": 1211
+      },
+      "tcga_sample_type_counts": {
+        "01": 1091,
+        "06": 7,
+        "11": 113
+      },
+      "eligible_type_01_or_11_samples": 1204,
+      "eligible_type_01_or_11_patient_count": 1092,
+      "eligible_type_01_or_11_stored_label_counts": {
+        "": 1204
+      },
+      "unique_patient_count_all_tcga_barcodes": 1092,
+      "duplicate_sample_id_count": 0,
+      "non_tcga_or_unparseable_sample_ids": [],
+      "rows_with_wrong_column_count": 0,
+      "label_row_first_cell": "Sample_Type"
+    },
+    {
+      "path": "Data/Survival_TCGA_VS_Desmd/TCGA_BRCA_NvT_v1.csv",
+      "available": true,
+      "sha256": "59c27db1eb31c5a9c54d71d8bc96f829f64d21a55a82e323aa26b34ead001198",
+      "header_columns": 1212,
+      "sample_columns": 1211,
+      "body_rows_including_label_row": 22490,
+      "last_row_label_counts": {
+        "Tumor": 1098,
+        "Normal": 113
+      },
+      "tcga_sample_type_counts": {
+        "01": 1091,
+        "06": 7,
+        "11": 113
+      },
+      "eligible_type_01_or_11_samples": 1204,
+      "eligible_type_01_or_11_patient_count": 1092,
+      "eligible_type_01_or_11_stored_label_counts": {
+        "Tumor": 1091,
+        "Normal": 113
+      },
+      "unique_patient_count_all_tcga_barcodes": 1092,
+      "duplicate_sample_id_count": 0,
+      "non_tcga_or_unparseable_sample_ids": [],
+      "rows_with_wrong_column_count": 0,
+      "label_row_first_cell": "Sample_Type"
+    },
+    {
+      "path": "Data/Survival_TCGA_VS_Desmd/TCGA_BRCA_NvT_v2.csv",
+      "available": true,
+      "sha256": "cc0e0d85d82e8e6eeb48e0ae1926814a0826465b1b7be5c1e8df0ce1f688f1b1",
+      "header_columns": 251,
+      "sample_columns": 250,
+      "body_rows_including_label_row": 22490,
+      "last_row_label_counts": {
+        "Tumor": 138,
+        "Normal": 112
+      },
+      "tcga_sample_type_counts": {
+        "01": 136,
+        "06": 2,
+        "11": 112
+      },
+      "eligible_type_01_or_11_samples": 248,
+      "eligible_type_01_or_11_patient_count": 235,
+      "eligible_type_01_or_11_stored_label_counts": {
+        "Tumor": 136,
+        "Normal": 112
+      },
+      "unique_patient_count_all_tcga_barcodes": 235,
+      "duplicate_sample_id_count": 0,
+      "non_tcga_or_unparseable_sample_ids": [],
+      "rows_with_wrong_column_count": 0,
+      "label_row_first_cell": "Sample_Type"
+    }
+  ]
+}

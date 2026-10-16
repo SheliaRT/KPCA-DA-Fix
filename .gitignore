@@ -63,3 +63,11 @@ ipython_config.py
 
 # Local research datasets and generated results
 Data/
+results/
+audit/environment_setup.log
+audit/environment_setup.status
+audit/environment_setup.done
+audit/*.log
+audit/*.status
+audit/*.done
+audit/*.queued

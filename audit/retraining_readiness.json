@@ -1,0 +1,70 @@
+{
+  "result": "passed",
+  "note": "No KPCA fitting or classifier training was performed.",
+  "source_file": "/Users/mymac/SHELIAPC/Zmyfiles/codes/research/KPCA-Da-ChatGPT/Data/TvsN/TCGA_BRCA_NvT_new.csv",
+  "target_file": "/Users/mymac/SHELIAPC/Zmyfiles/codes/research/KPCA-Da-ChatGPT/Data/TvsN/GSE45498_TvsN_official_200.csv",
+  "source_file_sha256": "dfd99d30eb4da8de0978992823d15191993a6a4472808ca2ccf761dd5cd3d33b",
+  "target_file_sha256": "513fe732df4cedff0caaf40d5520a2c1c299e6afd2773008ebac5c0a8c830608",
+  "source_excluded_samples": [
+    "TCGA-AC-A6IX-06A",
+    "TCGA-BH-A1FE-06A"
+  ],
+  "clip_scaled_values": false,
+  "preprocessing_policy": {
+    "variance_filter": "stable rank, discard floor(percentile * feature_count); remove constants",
+    "variance_percentile": 30.0,
+    "variance_tie_break": "stable input gene order",
+    "source_filter_fit_scope": "source training samples only",
+    "target_private_filter_fit_scope": "target adaptation samples only",
+    "shared_gene_scaler_fit_scope": "source training samples only",
+    "target_private_scaler_fit_scope": "target adaptation samples only"
+  },
+  "source": {
+    "samples": 589,
+    "patients": 544,
+    "genes": 22489,
+    "train": 471,
+    "validation": 118,
+    "genes_after_filter": 15743
+  },
+  "target": {
+    "samples": 200,
+    "patients": 158,
+    "genes": 236,
+    "adaptation": 139,
+    "test": 61,
+    "genes_after_policy": 232
+  },
+  "shared_genes_after_filtering": 222,
+  "training_only_scaling_ranges": {
+    "source_training": {
+      "minimum": 0.0,
+      "maximum": 1.0000000000000002,
+      "below_zero_fraction": 0.0,
+      "above_one_fraction": 0.00020998110170084692,
+      "outside_unit_interval_fraction": 0.00020998110170084692
+    },
+    "source_validation": {
+      "minimum": -0.073560871436449,
+      "maximum": 142.54163371326922,
+      "below_zero_fraction": 0.0008952055096857684,
+      "above_one_fraction": 0.001846395007950803,
+      "outside_unit_interval_fraction": 0.0027416005176365715
+    },
+    "target_adaptation_all_retained": {
+      "minimum": -0.053306682026354524,
+      "maximum": 50.702485088641176,
+      "below_zero_fraction": 0.012434879682460927,
+      "above_one_fraction": 0.14862937236417761,
+      "outside_unit_interval_fraction": 0.16106425204663855
+    },
+    "target_adaptation_shared_genes": {
+      "minimum": -0.053306682026354524,
+      "maximum": 50.702485088641176,
+      "below_zero_fraction": 0.012995009397887095,
+      "above_one_fraction": 0.15522716961565883,
+      "outside_unit_interval_fraction": 0.1682221790135459
+    }
+  },
+  "seed": 42
+}

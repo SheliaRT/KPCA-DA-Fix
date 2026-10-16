@@ -1,0 +1,235 @@
+{
+  "valid_pair": true,
+  "comparison_arm": "kpcada",
+  "seed": 49,
+  "source_file_sha256": "dfd99d30eb4da8de0978992823d15191993a6a4472808ca2ccf761dd5cd3d33b",
+  "target_file_sha256": "513fe732df4cedff0caaf40d5520a2c1c299e6afd2773008ebac5c0a8c830608",
+  "source_patient_count": 544,
+  "target_patient_count": 158,
+  "patient_mapping_provenance": "mapping metadata missing from one legacy artifact; exact patient IDs and splits verified from both manifests",
+  "target_test_samples": 58,
+  "target_test_patients": 48,
+  "matched_settings": {
+    "source_validation_size": 0.2,
+    "target_test_size": 0.3,
+    "variance_percentile": 30.0,
+    "feature_scope": "all",
+    "image_size": 227,
+    "model": "resnet50d",
+    "classifier_epochs": 100,
+    "early_stopping_patience": 10,
+    "scheduler_patience": 3,
+    "classifier_lr": 0.0001,
+    "weight_decay": 0.001,
+    "batch_size": 16,
+    "no_pretrained": false,
+    "source_validation_threshold": false,
+    "clip_scaled_values": false,
+    "align_shared_genes": false,
+    "anchor_shared_pixels": false,
+    "class_weighted_loss": true,
+    "preprocessing_policy": {
+      "variance_filter": "stable rank, discard floor(percentile * feature_count); remove constants",
+      "variance_percentile": 30.0,
+      "variance_tie_break": "stable input gene order",
+      "source_filter_fit_scope": "source training samples only",
+      "shared_gene_scaler_fit_scope": "source training samples only",
+      "clip_scaled_values": false
+    },
+    "code_environment": {
+      "status": "not recorded in legacy run artifacts",
+      "field_status": {
+        "python_source_tree_sha256": "not recorded",
+        "environment_lock_sha256": "not recorded"
+      },
+      "python_source_tree_sha256": null,
+      "environment_lock_sha256": null
+    }
+  },
+  "preprocessing_policies": {
+    "baseline": {
+      "variance_filter": "stable rank, discard floor(percentile * feature_count); remove constants",
+      "variance_percentile": 30.0,
+      "variance_tie_break": "stable input gene order",
+      "source_filter_fit_scope": "source training samples only",
+      "target_private_filter_fit_scope": "target adaptation samples only",
+      "shared_gene_scaler_fit_scope": "source training samples only",
+      "target_private_scaler_fit_scope": "target adaptation samples only",
+      "clip_scaled_values": false
+    },
+    "adapted": {
+      "variance_filter": "stable rank, discard floor(percentile * feature_count); remove constants",
+      "variance_percentile": 30.0,
+      "variance_tie_break": "stable input gene order",
+      "source_filter_fit_scope": "source training samples only",
+      "target_private_filter_fit_scope": "target adaptation samples only",
+      "shared_gene_scaler_fit_scope": "source training samples only",
+      "target_private_scaler_fit_scope": "target adaptation samples only",
+      "clip_scaled_values": false
+    }
+  },
+  "method_configurations": {
+    "baseline": {
+      "arm": "baseline",
+      "regularization_mode": "trace",
+      "selected_lambda_reg": 0.001,
+      "alignment_weight": 1.0,
+      "effective_mmd_gamma": 8.39796257019043
+    },
+    "comparison": {
+      "arm": "kpcada",
+      "regularization_mode": "trace",
+      "kpca_epochs": 500,
+      "kpca_lr": 0.001,
+      "kpca_gamma": 0.2,
+      "lambda_reg_setting": null,
+      "lambda_grid_setting": null,
+      "selected_lambda_reg": 0.1,
+      "alignment_weight": 1.0,
+      "alignment_weight_provenance": "run metrics",
+      "align_shared_genes": false,
+      "anchor_shared_pixels": false,
+      "effective_mmd_gamma": 8.39796257019043
+    }
+  },
+  "baseline": {
+    "best_epoch": 2,
+    "source_validation_balanced_accuracy": 0.9894736842105263,
+    "test_metrics": {
+      "labels": [
+        0,
+        1
+      ],
+      "confusion_matrix": [
+        [
+          10,
+          0
+        ],
+        [
+          48,
+          0
+        ]
+      ],
+      "accuracy": 0.1724137931034483,
+      "balanced_accuracy": 0.5,
+      "macro_f1": 0.14705882352941177,
+      "sensitivity_by_class": {
+        "0": 1.0,
+        "1": 0.0
+      },
+      "specificity_by_class": {
+        "0": 0.0,
+        "1": 1.0
+      },
+      "positive_label": 1,
+      "sensitivity": 0.0,
+      "specificity": 1.0
+    }
+  },
+  "adapted": {
+    "best_epoch": 3,
+    "source_validation_balanced_accuracy": 0.9894736842105263,
+    "test_metrics": {
+      "labels": [
+        0,
+        1
+      ],
+      "confusion_matrix": [
+        [
+          0,
+          10
+        ],
+        [
+          21,
+          27
+        ]
+      ],
+      "accuracy": 0.46551724137931033,
+      "balanced_accuracy": 0.28125,
+      "macro_f1": 0.3176470588235294,
+      "sensitivity_by_class": {
+        "0": 0.0,
+        "1": 0.5625
+      },
+      "specificity_by_class": {
+        "0": 0.5625,
+        "1": 0.0
+      },
+      "positive_label": 1,
+      "sensitivity": 0.5625,
+      "specificity": 0.0
+    },
+    "geometry_diagnostics": {
+      "target_normalized_squared_movement": 0.03690591483585591,
+      "target_variance_ratio_by_component": [
+        0.716429714422968,
+        0.7376099069037846
+      ],
+      "target_covariance_eigenvalues_initial": [
+        0.04161810337747027,
+        0.1105833121113024
+      ],
+      "target_covariance_eigenvalues_adapted": [
+        0.030099655542638933,
+        0.07982344053097531
+      ],
+      "target_pairwise_distance_spearman": 0.978414435594808,
+      "source_gene_pixel_collisions": {
+        "genes": 15743,
+        "occupied_pixels": 8621,
+        "genes_in_collisions": 7122,
+        "collision_fraction": 0.4523915390967414
+      },
+      "target_gene_pixel_collisions": {
+        "genes": 232,
+        "occupied_pixels": 138,
+        "genes_in_collisions": 94,
+        "collision_fraction": 0.4051724137931034
+      },
+      "shared_gene_same_pixel_fraction": 0.0,
+      "shared_gene_pixel_displacement": {
+        "mean": 66.22390757908808,
+        "median": 55.339379445809314,
+        "p95": 161.12628081368743,
+        "maximum": 190.80094339389416
+      }
+    }
+  },
+  "test_metric_delta_adapted_minus_baseline": {
+    "accuracy": 0.29310344827586204,
+    "balanced_accuracy": -0.21875,
+    "macro_f1": 0.17058823529411762,
+    "sensitivity": 0.5625,
+    "specificity": -1.0
+  },
+  "patient_cluster_bootstrap": {
+    "unit": "patient group; all rows from each sampled patient are retained",
+    "resamples_requested": 2000,
+    "resamples_used": 2000,
+    "random_state": 49,
+    "delta_95_percentile_interval": {
+      "accuracy": [
+        0.13787258912916422,
+        0.46296296296296297
+      ],
+      "balanced_accuracy": [
+        -0.29166666666666663,
+        -0.14583333333333331
+      ],
+      "macro_f1": [
+        0.08355437665782492,
+        0.2647745262949583
+      ],
+      "sensitivity": [
+        0.4166666666666667,
+        0.7083333333333334
+      ],
+      "specificity": [
+        -1.0,
+        -1.0
+      ]
+    },
+    "scope_note": "Conditional on the fitted models and this held-out split; not uncertainty over training runs or new cohorts."
+  },
+  "interpretation": "One paired seed is a pilot; it does not establish paper-level performance."
+}

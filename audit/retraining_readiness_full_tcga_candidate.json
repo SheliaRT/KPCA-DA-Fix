@@ -1,0 +1,60 @@
+{
+  "result": "passed",
+  "note": "No KPCA fitting or classifier training was performed.",
+  "source_file": "/Users/mymac/SHELIAPC/Zmyfiles/codes/research/KPCA-Da-ChatGPT/Data/TvsN/TCGA_BRCA_NvT_new.csv",
+  "target_file": "/Users/mymac/SHELIAPC/Zmyfiles/codes/research/KPCA-Da-ChatGPT/Data/TvsN/GSE45498_NvT.csv",
+  "source_file_sha256": "dfd99d30eb4da8de0978992823d15191993a6a4472808ca2ccf761dd5cd3d33b",
+  "target_file_sha256": "7dbf4d3ebaef311c241692fe7f6e4a76576af200a43bbb68878b7f40ba0dbd82",
+  "source_excluded_samples": [
+    "TCGA-AC-A6IX-06A",
+    "TCGA-BH-A1FE-06A"
+  ],
+  "source": {
+    "samples": 589,
+    "patients": 544,
+    "genes": 22489,
+    "train": 471,
+    "validation": 118,
+    "genes_after_filter": 15742
+  },
+  "target": {
+    "samples": 183,
+    "patients": 160,
+    "genes": 236,
+    "adaptation": 126,
+    "test": 57,
+    "genes_after_policy": 232
+  },
+  "shared_genes_after_filtering": 222,
+  "training_only_scaling_ranges": {
+    "source_training": {
+      "minimum": 0.0,
+      "maximum": 1.0000000000000002,
+      "below_zero_fraction": 0.0,
+      "above_one_fraction": 0.00020999444060960698,
+      "outside_unit_interval_fraction": 0.00020999444060960698
+    },
+    "source_validation": {
+      "minimum": -0.073560871436449,
+      "maximum": 142.54163371326922,
+      "below_zero_fraction": 0.0008947240352376994,
+      "above_one_fraction": 0.0018459739571781415,
+      "outside_unit_interval_fraction": 0.002740697992415841
+    },
+    "target_adaptation_all_retained": {
+      "minimum": -0.053306682026354524,
+      "maximum": 50.702485088641176,
+      "below_zero_fraction": 0.013409961685823755,
+      "above_one_fraction": 0.15760125889436236,
+      "outside_unit_interval_fraction": 0.17101122058018609
+    },
+    "target_adaptation_shared_genes": {
+      "minimum": -0.053306682026354524,
+      "maximum": 50.702485088641176,
+      "below_zero_fraction": 0.014014014014014014,
+      "above_one_fraction": 0.16462891462891463,
+      "outside_unit_interval_fraction": 0.17864292864292863
+    }
+  },
+  "seed": 42
+}

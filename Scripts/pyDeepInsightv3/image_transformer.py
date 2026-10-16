@@ -183,13 +183,13 @@ class ImageTransformer:
                 # Is mapped to the cluster j=clabl[i]
                 # Which is mapped to the pixel center clust_cntr[j]
                 # Which is mapped to the pixel k = lsa[1][j]
-                # For pixel k, x = k % px_size[0] and y = k // px_size[0]
+                # For pixel k, x uses the image width as the row stride.
                 j = cl_labels[i]
             else:
                 j = i
             ki = lsa[1][j]
-            xi = ki % px_size[0]
-            yi = ki // px_size[0]
+            xi = ki % px_size[1]
+            yi = ki // px_size[1]
             px_assigned[i] = [yi, xi]
         return px_assigned
 
@@ -220,8 +220,8 @@ class ImageTransformer:
             else:
                 j = i
             ki = lsa[1][j]
-            xi = ki % px_size[0]
-            yi = ki // px_size[0]
+            xi = ki % px_size[1]
+            yi = ki // px_size[1]
             px_assigned[i] = [yi, xi]
         return px_assigned
 
@@ -238,7 +238,8 @@ class ImageTransformer:
         px_map = np.empty((np.prod(px_size), 2))
         for i in range(0, px_size[0]):
             for j in range(0, px_size[1]):
-                px_map[i * px_size[0] + j] = [i, j]
+                # Flatten rows using the image width (column count).
+                px_map[i * px_size[1] + j] = [i, j]
         px_centroid = px_map + 0.5
         return px_centroid
     

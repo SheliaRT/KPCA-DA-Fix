@@ -1,0 +1,24 @@
+{
+  "seed": 52,
+  "source_train_samples": 471,
+  "target_adaptation_samples": 139,
+  "shared_genes": 222,
+  "target_labels_materialized": false,
+  "held_out_target_values_used": false,
+  "source_fit_transform_on_target_adaptation": {
+    "fraction_outside_unit_interval": 0.18280510726553892,
+    "maximum": 50.702485088641176,
+    "p99": 4.773702672673672
+  },
+  "adaptation_fit_transform_on_same_adaptation_rows": {
+    "fraction_outside_unit_interval": 0.0,
+    "maximum": 1.0,
+    "p99": 0.8986429304506375
+  },
+  "target_to_source_per_gene_range_ratio": {
+    "median": 2.199333057378897,
+    "p10": 0.4215461244336096,
+    "p90": 7.535380442139471
+  },
+  "scope_note": "Preprocessing diagnostic only. It does not evaluate target labels or establish a performance benefit."
+}

@@ -1,0 +1,61 @@
+{
+  "result": "passed",
+  "note": "No KPCA fitting or classifier training was performed.",
+  "source_file": "/Users/mymac/SHELIAPC/Zmyfiles/codes/research/KPCA-Da-ChatGPT/Data/TvsN/TCGA_BRCA_NvT_new.csv",
+  "target_file": "/Users/mymac/SHELIAPC/Zmyfiles/codes/research/KPCA-Da-ChatGPT/Data/TvsN/GSE45498_NvT.csv",
+  "source_file_sha256": "dfd99d30eb4da8de0978992823d15191993a6a4472808ca2ccf761dd5cd3d33b",
+  "target_file_sha256": "7dbf4d3ebaef311c241692fe7f6e4a76576af200a43bbb68878b7f40ba0dbd82",
+  "source_excluded_samples": [
+    "TCGA-AC-A6IX-06A",
+    "TCGA-BH-A1FE-06A"
+  ],
+  "clip_scaled_values": true,
+  "source": {
+    "samples": 589,
+    "patients": 544,
+    "genes": 22489,
+    "train": 471,
+    "validation": 118,
+    "genes_after_filter": 15742
+  },
+  "target": {
+    "samples": 183,
+    "patients": 160,
+    "genes": 236,
+    "adaptation": 126,
+    "test": 57,
+    "genes_after_policy": 232
+  },
+  "shared_genes_after_filtering": 222,
+  "training_only_scaling_ranges": {
+    "source_training": {
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "below_zero_fraction": 0.0,
+      "above_one_fraction": 0.0,
+      "outside_unit_interval_fraction": 0.0
+    },
+    "source_validation": {
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "below_zero_fraction": 0.0,
+      "above_one_fraction": 0.0,
+      "outside_unit_interval_fraction": 0.0
+    },
+    "target_adaptation_all_retained": {
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "below_zero_fraction": 0.0,
+      "above_one_fraction": 0.0,
+      "outside_unit_interval_fraction": 0.0
+    },
+    "target_adaptation_shared_genes": {
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "below_zero_fraction": 0.0,
+      "above_one_fraction": 0.0,
+      "outside_unit_interval_fraction": 0.0
+    }
+  },
+  "seed": 42
+}

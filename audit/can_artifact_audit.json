@@ -1,0 +1,405 @@
+{
+  "artifact_count": 13,
+  "artifacts": [
+    {
+      "path": "Data/Survival_TCGA_VS_Desmd/y_pred_tcga_tvn_can.csv",
+      "sha256": "ef62f45a225ec14a7429d6bd665cfcf1d4daf248b35df7cb1f38e98402555286",
+      "rows_including_any_header": 251,
+      "row_widths": [
+        1
+      ],
+      "numeric_values": 250,
+      "non_numeric_examples": [
+        "y"
+      ],
+      "numeric_min": 0.0,
+      "numeric_max": 1.0,
+      "contains_sample_ids": false
+    },
+    {
+      "path": "Data/TCGAvsDesmd/desmethtotcga/output_CAN.csv",
+      "sha256": "b69e0aedc69fe4676ce201274c50591a68e8459dcb605dd38375f8778477d386",
+      "rows_including_any_header": 154,
+      "row_widths": [
+        1
+      ],
+      "numeric_values": 154,
+      "non_numeric_examples": [],
+      "numeric_min": 0.141654655,
+      "numeric_max": 0.97376299,
+      "contains_sample_ids": false
+    },
+    {
+      "path": "Data/TCGAvsDesmd/desmethtotcga/test/pred_CAN.csv",
+      "sha256": "21208d063eb3ae600dcd9179e44613d88cc258426964c2a74de203075e638168",
+      "rows_including_any_header": 47,
+      "row_widths": [
+        1
+      ],
+      "numeric_values": 47,
+      "non_numeric_examples": [],
+      "numeric_min": 0.0297949,
+      "numeric_max": 0.92380874,
+      "contains_sample_ids": false
+    },
+    {
+      "path": "Data/TCGAvsDesmd/tcgatodesmedth/output_CAN.csv",
+      "sha256": "4a53f1cc9f4331db18cea4c452a8e1c2a8e9932d17ddd7b9b74ac60ed0cf2cde",
+      "rows_including_any_header": 162,
+      "row_widths": [
+        1
+      ],
+      "numeric_values": 162,
+      "non_numeric_examples": [],
+      "numeric_min": 0.11188388,
+      "numeric_max": 0.817151833,
+      "contains_sample_ids": false
+    },
+    {
+      "path": "Data/TCGAvsDesmd/tcgatodesmedth/test/pred_CAN.csv",
+      "sha256": "80eca6d63249acd8adce36e2315180a0719a9b8064a354ef9f48fdc18e4041c5",
+      "rows_including_any_header": 46,
+      "row_widths": [
+        1
+      ],
+      "numeric_values": 45,
+      "non_numeric_examples": [
+        "pred"
+      ],
+      "numeric_min": 0.295870709,
+      "numeric_max": 0.93369961,
+      "contains_sample_ids": false
+    },
+    {
+      "path": "Data/TCGAvsDesmd/tcgatodesmedth/test1/pred_CAN.csv",
+      "sha256": "80eca6d63249acd8adce36e2315180a0719a9b8064a354ef9f48fdc18e4041c5",
+      "rows_including_any_header": 46,
+      "row_widths": [
+        1
+      ],
+      "numeric_values": 45,
+      "non_numeric_examples": [
+        "pred"
+      ],
+      "numeric_min": 0.295870709,
+      "numeric_max": 0.93369961,
+      "contains_sample_ids": false
+    },
+    {
+      "path": "Data/TvsN/GSEtoTCGA/output_CAN.csv",
+      "sha256": "8fc936ce7014e857550c9ddd7a321a828aef96130bafe0776ed44d36f6256581",
+      "rows_including_any_header": 250,
+      "row_widths": [
+        1
+      ],
+      "numeric_values": 250,
+      "non_numeric_examples": [],
+      "numeric_min": 0.016034527,
+      "numeric_max": 5.861230195,
+      "contains_sample_ids": false
+    },
+    {
+      "path": "Data/TvsN/GSEtoTCGA/test/pred_CAN.csv",
+      "sha256": "92370f1252cde996aa6bcea5836f94502e7f1e0fe5cbca16c6dc154841f35a03",
+      "rows_including_any_header": 180,
+      "row_widths": [
+        1
+      ],
+      "numeric_values": 180,
+      "non_numeric_examples": [],
+      "numeric_min": 0.016034527,
+      "numeric_max": 5.861230195,
+      "contains_sample_ids": false
+    },
+    {
+      "path": "Data/TvsN/GSEtoTCGA/test1/pred_CAN.csv",
+      "sha256": "0d71048d6ad32b29057d0e06bb75b11ceed180b3a72b5c8bcd1273d78af89fac",
+      "rows_including_any_header": 181,
+      "row_widths": [
+        1
+      ],
+      "numeric_values": 180,
+      "non_numeric_examples": [
+        "pred"
+      ],
+      "numeric_min": 0.016034527,
+      "numeric_max": 5.861230195,
+      "contains_sample_ids": false
+    },
+    {
+      "path": "Data/TvsN/TCGAtoGSE/output_CAN.csv",
+      "sha256": "e9f60b956eb608d24309f88195c3300b7cc58dd19d6d2e3c8047e530a067d483",
+      "rows_including_any_header": 183,
+      "row_widths": [
+        1
+      ],
+      "numeric_values": 183,
+      "non_numeric_examples": [],
+      "numeric_min": 0.225133181,
+      "numeric_max": 0.999915719,
+      "contains_sample_ids": false
+    },
+    {
+      "path": "Data/TvsN/TCGAtoGSE/test/pred_CAN.csv",
+      "sha256": "7667a7a8d804691da5215eedeade125526be3a24c6003d6afcef1273377f4d8b",
+      "rows_including_any_header": 45,
+      "row_widths": [
+        1
+      ],
+      "numeric_values": 45,
+      "non_numeric_examples": [],
+      "numeric_min": 0.12124548,
+      "numeric_max": 0.9995136,
+      "contains_sample_ids": false
+    },
+    {
+      "path": "Data/cptacvssmc/cptacVSsmc/output_CAN.csv",
+      "sha256": "bd7a560f14aee620055339ba296a036bca90735e4c689aafdda4e3d4680dd4fd",
+      "rows_including_any_header": 166,
+      "row_widths": [
+        1
+      ],
+      "numeric_values": 166,
+      "non_numeric_examples": [],
+      "numeric_min": 0.0,
+      "numeric_max": 3.0,
+      "contains_sample_ids": false
+    },
+    {
+      "path": "Data/cptacvssmc/smcVScptac/output_CAN.csv",
+      "sha256": "225f84bbf0fa20f1c01eda4f90117f614a1a2d43133efa5b4a25d91dbc89dc5b",
+      "rows_including_any_header": 117,
+      "row_widths": [
+        1
+      ],
+      "numeric_values": 117,
+      "non_numeric_examples": [],
+      "numeric_min": 0.0,
+      "numeric_max": 3.0,
+      "contains_sample_ids": false
+    }
+  ],
+  "sidecar_reconstructions": [
+    {
+      "truth_path": "Data/TCGAvsDesmd/desmethtotcga/true.csv",
+      "truth_sha256": "8ad258f976aad20b9f38de443a054a63b98aa7358f721141303adabc9d728733",
+      "score_rows": 154,
+      "row_counts_match": true,
+      "truth_header": [],
+      "score_header": [],
+      "label_values": [
+        0.0,
+        1.0
+      ],
+      "row_order_assumption": "same-folder truth and score vectors are positionally paired, as in the archived scoring notebook; sample IDs are absent",
+      "roc_auc": 0.6852157943067034,
+      "accuracy_at_archived_threshold_0_5": 0.6363636363636364,
+      "balanced_accuracy_at_archived_threshold_0_5": 0.6686868686868688,
+      "macro_f1_at_archived_threshold_0_5": 0.6341422026132699
+    },
+    {
+      "truth_path": "Data/TCGAvsDesmd/desmethtotcga/test/true.csv",
+      "truth_sha256": "8f20dfcce445bd2c357e90cad4013ee6dd0078875ff8aa7ec439682607ef90f4",
+      "score_rows": 47,
+      "row_counts_match": true,
+      "truth_header": [],
+      "score_header": [],
+      "label_values": [
+        0.0,
+        1.0
+      ],
+      "row_order_assumption": "same-folder truth and score vectors are positionally paired, as in the archived scoring notebook; sample IDs are absent",
+      "roc_auc": 0.6803921568627451,
+      "accuracy_at_archived_threshold_0_5": 0.6382978723404256,
+      "balanced_accuracy_at_archived_threshold_0_5": 0.6529411764705882,
+      "macro_f1_at_archived_threshold_0_5": 0.6323055683387022
+    },
+    {
+      "truth_path": "Data/TCGAvsDesmd/tcgatodesmedth/true.csv",
+      "truth_sha256": "a4a90c2ed741a675b9a4f00cd420a85bb796e7b11dd166cd98c135fc35d4300b",
+      "score_rows": 162,
+      "row_counts_match": true,
+      "truth_header": [],
+      "score_header": [],
+      "label_values": [
+        0.0,
+        1.0
+      ],
+      "row_order_assumption": "same-folder truth and score vectors are positionally paired, as in the archived scoring notebook; sample IDs are absent",
+      "roc_auc": 0.8223504890171557,
+      "accuracy_at_archived_threshold_0_5": 0.6666666666666666,
+      "balanced_accuracy_at_archived_threshold_0_5": 0.7099567099567099,
+      "macro_f1_at_archived_threshold_0_5": 0.6662087912087913
+    },
+    {
+      "truth_path": "Data/TCGAvsDesmd/tcgatodesmedth/test/true.csv",
+      "truth_sha256": "b02d1803dbcb7621e4e94f52b1982983b7ae4eecbe26337916b48bc753b2ded6",
+      "score_rows": 45,
+      "row_counts_match": true,
+      "truth_header": [
+        "true_labels"
+      ],
+      "score_header": [
+        "pred"
+      ],
+      "label_values": [
+        0.0,
+        1.0
+      ],
+      "row_order_assumption": "same-folder truth and score vectors are positionally paired, as in the archived scoring notebook; sample IDs are absent",
+      "roc_auc": 0.7391304347826086,
+      "accuracy_at_archived_threshold_0_5": 0.6666666666666666,
+      "balanced_accuracy_at_archived_threshold_0_5": 0.6669960474308301,
+      "macro_f1_at_archived_threshold_0_5": 0.6666666666666666
+    },
+    {
+      "truth_path": "Data/TCGAvsDesmd/tcgatodesmedth/test1/true.csv",
+      "truth_sha256": "b02d1803dbcb7621e4e94f52b1982983b7ae4eecbe26337916b48bc753b2ded6",
+      "score_rows": 45,
+      "row_counts_match": true,
+      "truth_header": [
+        "true_labels"
+      ],
+      "score_header": [
+        "pred"
+      ],
+      "label_values": [
+        0.0,
+        1.0
+      ],
+      "row_order_assumption": "same-folder truth and score vectors are positionally paired, as in the archived scoring notebook; sample IDs are absent",
+      "roc_auc": 0.7391304347826086,
+      "accuracy_at_archived_threshold_0_5": 0.6666666666666666,
+      "balanced_accuracy_at_archived_threshold_0_5": 0.6669960474308301,
+      "macro_f1_at_archived_threshold_0_5": 0.6666666666666666
+    },
+    {
+      "truth_path": "Data/TvsN/GSEtoTCGA/true.csv",
+      "truth_sha256": "eb4533406f7a05077816a7a4b7c94ae8865aec8ee5e0a4a25f1106ae6befd3d0",
+      "score_rows": 250,
+      "row_counts_match": true,
+      "truth_header": [],
+      "score_header": [],
+      "label_values": [
+        0.0,
+        1.0
+      ],
+      "row_order_assumption": "same-folder truth and score vectors are positionally paired, as in the archived scoring notebook; sample IDs are absent",
+      "roc_auc": 0.7466356107660455,
+      "accuracy_at_archived_threshold_0_5": 0.76,
+      "balanced_accuracy_at_archived_threshold_0_5": 0.7598990683229814,
+      "macro_f1_at_archived_threshold_0_5": 0.7584541062801933
+    },
+    {
+      "truth_path": "Data/TvsN/GSEtoTCGA/test/true.csv",
+      "truth_sha256": "bb4bf81b199cf43ea38ea6f4951525910e9ff8347e21e965ad4a2fe6adfa4593",
+      "score_rows": 180,
+      "row_counts_match": true,
+      "truth_header": [],
+      "score_header": [],
+      "label_values": [
+        0.0,
+        1.0
+      ],
+      "row_order_assumption": "same-folder truth and score vectors are positionally paired, as in the archived scoring notebook; sample IDs are absent",
+      "roc_auc": 0.7781234444997511,
+      "accuracy_at_archived_threshold_0_5": 0.7833333333333333,
+      "balanced_accuracy_at_archived_threshold_0_5": 0.7761324041811846,
+      "macro_f1_at_archived_threshold_0_5": 0.7783461210571185
+    },
+    {
+      "truth_path": "Data/TvsN/GSEtoTCGA/test1/true.csv",
+      "truth_sha256": "09a924b37fa438cbe643efb000529128d74edb91c2ebb492957f1ec011fae7c1",
+      "score_rows": 180,
+      "row_counts_match": true,
+      "truth_header": [
+        "true_labels"
+      ],
+      "score_header": [
+        "pred"
+      ],
+      "label_values": [
+        0.0,
+        1.0
+      ],
+      "row_order_assumption": "same-folder truth and score vectors are positionally paired, as in the archived scoring notebook; sample IDs are absent",
+      "roc_auc": 0.7300895968143355,
+      "accuracy_at_archived_threshold_0_5": 0.7222222222222222,
+      "balanced_accuracy_at_archived_threshold_0_5": 0.7140368342458935,
+      "macro_f1_at_archived_threshold_0_5": 0.715334008097166
+    },
+    {
+      "truth_path": "Data/TvsN/TCGAtoGSE/true.csv",
+      "truth_sha256": "21ac18009b0487e20b6ad3f96c977ec6cddf90166404dd9707238b6799884e95",
+      "score_rows": 183,
+      "row_counts_match": true,
+      "truth_header": [],
+      "score_header": [],
+      "label_values": [
+        0.0,
+        1.0
+      ],
+      "row_order_assumption": "same-folder truth and score vectors are positionally paired, as in the archived scoring notebook; sample IDs are absent",
+      "roc_auc": 0.7657342657342657,
+      "accuracy_at_archived_threshold_0_5": 0.7868852459016393,
+      "balanced_accuracy_at_archived_threshold_0_5": 0.710576923076923,
+      "macro_f1_at_archived_threshold_0_5": 0.7011932175005233
+    },
+    {
+      "truth_path": "Data/TvsN/TCGAtoGSE/test/true.csv",
+      "truth_sha256": "57dc62250a499db75b3b1cfd0307198421a1a0863ab5764be45ad7769983ada8",
+      "score_rows": 45,
+      "row_counts_match": true,
+      "truth_header": [],
+      "score_header": [],
+      "label_values": [
+        0.0,
+        1.0
+      ],
+      "row_order_assumption": "same-folder truth and score vectors are positionally paired, as in the archived scoring notebook; sample IDs are absent",
+      "roc_auc": 0.7647058823529411,
+      "accuracy_at_archived_threshold_0_5": 0.7333333333333333,
+      "balanced_accuracy_at_archived_threshold_0_5": 0.7163865546218487,
+      "macro_f1_at_archived_threshold_0_5": 0.7163865546218487
+    },
+    {
+      "truth_path": "Data/cptacvssmc/cptacVSsmc/true.csv",
+      "truth_sha256": "ad60645fad0ad3e84586c58ec9c1158e4971566439338ad9dfc0941b1634c014",
+      "score_rows": 166,
+      "row_counts_match": true,
+      "truth_header": [],
+      "score_header": [],
+      "label_values": [
+        0.0,
+        1.0,
+        2.0,
+        3.0
+      ],
+      "row_order_assumption": "same-folder truth and score vectors are positionally paired, as in the archived scoring notebook; sample IDs are absent",
+      "score_interpreted_as_class_prediction": true,
+      "accuracy": 0.6445783132530121,
+      "balanced_accuracy": 0.7097813238770686,
+      "macro_f1": 0.6750631313131312
+    },
+    {
+      "truth_path": "Data/cptacvssmc/smcVScptac/true.csv",
+      "truth_sha256": "6fdbeca51c15d6d71dd64b67067b62db78f2f679a43e369bd84eb4984e84afe3",
+      "score_rows": 117,
+      "row_counts_match": true,
+      "truth_header": [],
+      "score_header": [],
+      "label_values": [
+        0.0,
+        1.0,
+        2.0,
+        3.0
+      ],
+      "row_order_assumption": "same-folder truth and score vectors are positionally paired, as in the archived scoring notebook; sample IDs are absent",
+      "score_interpreted_as_class_prediction": true,
+      "accuracy": 0.6666666666666666,
+      "balanced_accuracy": 0.7219454887218045,
+      "macro_f1": 0.6360040895393887
+    }
+  ],
+  "interpretation": "These files are numeric CAN-named outputs only. No sample IDs, model checkpoint, executable CAN implementation, training configuration, or source-tree/environment fingerprint is present in these files. Metrics reconstructed against same-folder true.csv files assume positional order as the archived scoring notebook does; without sample IDs, that assumption and the paper cohort cannot be verified. These values are historical artifact diagnostics, not reproduced CAN results."
+}

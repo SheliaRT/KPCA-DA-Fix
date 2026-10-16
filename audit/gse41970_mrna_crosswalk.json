@@ -1,0 +1,68 @@
+{
+  "result": "passed",
+  "original_paper": {
+    "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC3566108/",
+    "miRNA_tumor_normal_cohort": {
+      "tumor": 165,
+      "normal": 59,
+      "total": 224
+    },
+    "reported_mRNA_cohort": {
+      "tumor": 158,
+      "normal": 40,
+      "metastatic": 54
+    }
+  },
+  "accessions": {
+    "GSE41970": {
+      "raw_supplement_url": "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE41nnn/GSE41970/suppl/GSE41970_mRNA_non-normalized_data.txt.gz",
+      "series_matrix_url": "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE41nnn/GSE41970/matrix/GSE41970-GPL16299_series_matrix.txt.gz",
+      "raw_supplement": {
+        "accession": "GSE41970",
+        "sha256_compressed": "2009e1b4155bbca3dd02ca3e875594f67c2df6e53a0d7cf327f2ddf5b46b7515",
+        "sha256_uncompressed": "8fdb156dfadcadb99568070e49dcb5e604be186a28d46edb06e1ead4dd09f7bf",
+        "compressed_bytes": 334300,
+        "sample_columns": 254
+      },
+      "series_matrix_sha256_compressed": "eb09d6b622f61fc92ff5eaf227257546ac41b714cbb18fd3e07802ea2b4f4869",
+      "series_matrix_sha256_uncompressed": "d09a65bffb091bec414dd8b60d604c21fd79ebcc7e71250f649059f54c10738a",
+      "series_matrix": {
+        "sample_count": 254,
+        "status_counts": {
+          "Metastatic": 54,
+          "normal": 40,
+          "primary triple negative cancer": 160
+        }
+      }
+    },
+    "GSE45498": {
+      "raw_supplement_url": "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE45nnn/GSE45498/suppl/GSE45498_mRNA_non-normalized_data.txt.gz",
+      "series_matrix_url": "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE45nnn/GSE45498/matrix/GSE45498-GPL16299_series_matrix.txt.gz",
+      "raw_supplement": {
+        "accession": "GSE45498",
+        "sha256_compressed": "4ab75d356d141bed9a189866f43a64e3f8c4618867fb893045c0c5a20784c69f",
+        "sha256_uncompressed": "8fdb156dfadcadb99568070e49dcb5e604be186a28d46edb06e1ead4dd09f7bf",
+        "compressed_bytes": 334300,
+        "sample_columns": 254
+      },
+      "series_matrix_sha256_compressed": "6ea47ea9353d9f9da5662a8e835f1273e03ee531718af2c9b8a10263c126067d",
+      "series_matrix_sha256_uncompressed": "8a13207c264bdef9c0a0037ff7eaceae85b86f809b195e1b416666abf9e1a6a5",
+      "series_matrix": {
+        "sample_count": 254,
+        "status_counts": {
+          "Metastatic": 54,
+          "normal": 40,
+          "primary triple negative cancer": 160
+        }
+      }
+    }
+  },
+  "crosswalk": {
+    "mRNA_supplements_identical_after_gzip_decompression": true,
+    "series_matrix_sample_ids_identical": true,
+    "series_matrix_sample_metadata_identical": true,
+    "primary_and_normal_mRNA_samples_in_GEO": 200,
+    "GEO_primary_tumor_count_minus_paper_mRNA_tumor_count": 2
+  },
+  "interpretation": "The 224 count is reported for the paper's miRNA tumor/normal cohort. The public GPL16299 mRNA deposits contain a distinct tissue-class composition. GSE41970 and GSE45498 are identical mRNA supplements after decompression; the public primary/normal mRNA subset has 200 samples, while the source article reports 198 mRNA tumor/normal samples (158 tumor, 40 normal). The two-tumor difference is not resolved by the public sample metadata and requires the authors' inclusion/QC manifest."
+}

@@ -1,0 +1,162 @@
+{
+  "valid_pair": true,
+  "seed": 46,
+  "source_file_sha256": "dfd99d30eb4da8de0978992823d15191993a6a4472808ca2ccf761dd5cd3d33b",
+  "target_file_sha256": "513fe732df4cedff0caaf40d5520a2c1c299e6afd2773008ebac5c0a8c830608",
+  "baseline": {
+    "arm": "baseline",
+    "seed": 46,
+    "source_file_sha256": "dfd99d30eb4da8de0978992823d15191993a6a4472808ca2ccf761dd5cd3d33b",
+    "target_file_sha256": "513fe732df4cedff0caaf40d5520a2c1c299e6afd2773008ebac5c0a8c830608",
+    "selection": {
+      "rule": "maximize source-validation balanced accuracy",
+      "threshold": 0.09390325844287872,
+      "source_validation_balanced_accuracy": 0.9894736842105263,
+      "validation_samples": 118,
+      "target_labels_used": false
+    },
+    "argmax_target_metrics": {
+      "labels": [
+        0,
+        1
+      ],
+      "confusion_matrix": [
+        [
+          11,
+          2
+        ],
+        [
+          45,
+          3
+        ]
+      ],
+      "accuracy": 0.22950819672131148,
+      "balanced_accuracy": 0.4543269230769231,
+      "macro_f1": 0.2160240634399781,
+      "sensitivity_by_class": {
+        "0": 0.8461538461538461,
+        "1": 0.0625
+      },
+      "specificity_by_class": {
+        "0": 0.0625,
+        "1": 0.8461538461538461
+      },
+      "positive_label": 1,
+      "sensitivity": 0.0625,
+      "specificity": 0.8461538461538461
+    },
+    "source_threshold_target_metrics": {
+      "labels": [
+        0,
+        1
+      ],
+      "confusion_matrix": [
+        [
+          0,
+          13
+        ],
+        [
+          0,
+          48
+        ]
+      ],
+      "accuracy": 0.7868852459016393,
+      "balanced_accuracy": 0.5,
+      "macro_f1": 0.44036697247706424,
+      "sensitivity_by_class": {
+        "0": 0.0,
+        "1": 1.0
+      },
+      "specificity_by_class": {
+        "0": 1.0,
+        "1": 0.0
+      },
+      "positive_label": 1,
+      "sensitivity": 1.0,
+      "specificity": 0.0
+    },
+    "target_metrics_are_development_evidence": true
+  },
+  "adapted": {
+    "arm": "kpcada",
+    "seed": 46,
+    "source_file_sha256": "dfd99d30eb4da8de0978992823d15191993a6a4472808ca2ccf761dd5cd3d33b",
+    "target_file_sha256": "513fe732df4cedff0caaf40d5520a2c1c299e6afd2773008ebac5c0a8c830608",
+    "selection": {
+      "rule": "maximize source-validation balanced accuracy",
+      "threshold": 0.934419721364975,
+      "source_validation_balanced_accuracy": 0.9894736842105263,
+      "validation_samples": 118,
+      "target_labels_used": false
+    },
+    "argmax_target_metrics": {
+      "labels": [
+        0,
+        1
+      ],
+      "confusion_matrix": [
+        [
+          11,
+          2
+        ],
+        [
+          29,
+          19
+        ]
+      ],
+      "accuracy": 0.4918032786885246,
+      "balanced_accuracy": 0.6209935897435898,
+      "macro_f1": 0.4829094886519005,
+      "sensitivity_by_class": {
+        "0": 0.8461538461538461,
+        "1": 0.3958333333333333
+      },
+      "specificity_by_class": {
+        "0": 0.3958333333333333,
+        "1": 0.8461538461538461
+      },
+      "positive_label": 1,
+      "sensitivity": 0.3958333333333333,
+      "specificity": 0.8461538461538461
+    },
+    "source_threshold_target_metrics": {
+      "labels": [
+        0,
+        1
+      ],
+      "confusion_matrix": [
+        [
+          13,
+          0
+        ],
+        [
+          48,
+          0
+        ]
+      ],
+      "accuracy": 0.21311475409836064,
+      "balanced_accuracy": 0.5,
+      "macro_f1": 0.17567567567567569,
+      "sensitivity_by_class": {
+        "0": 1.0,
+        "1": 0.0
+      },
+      "specificity_by_class": {
+        "0": 0.0,
+        "1": 1.0
+      },
+      "positive_label": 1,
+      "sensitivity": 0.0,
+      "specificity": 1.0
+    },
+    "target_metrics_are_development_evidence": true
+  },
+  "thresholded_adapted_minus_baseline": {
+    "accuracy": -0.5737704918032787,
+    "balanced_accuracy": 0.0,
+    "macro_f1": -0.2646912968013886,
+    "sensitivity": -1.0,
+    "specificity": 1.0
+  },
+  "interpretation": "The threshold is chosen without target labels; target metrics are post-hoc development evidence and do not establish independent generalization."
+}

@@ -1,0 +1,18 @@
+# Core leakage-controlled KPCA-DA training and audit-check dependencies.
+numpy
+pandas
+scipy
+scikit-learn
+torch
+torchvision
+timm
+matplotlib
+typing_extensions
+ipykernel
+
+# Dependencies used by the repository's remaining exploratory notebooks.
+seaborn
+umap-learn
+neuroCombat
+grad-cam
+torchcam

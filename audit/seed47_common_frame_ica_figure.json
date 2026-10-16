@@ -1,0 +1,18 @@
+{
+  "source_fit_count": 471,
+  "target_test_count": 62,
+  "baseline_marginal_w1_by_component": [
+    1.9526940686063847,
+    2.89703503526912
+  ],
+  "kpcada_marginal_w1_by_component": [
+    1.9501453814399157,
+    2.9155195220690846
+  ],
+  "baseline_mean_marginal_w1": 2.4248645519377523,
+  "kpcada_mean_marginal_w1": 2.4328324517545,
+  "target_labels_used": false,
+  "target_test_used_to_fit_frame_or_ica": false,
+  "figure_png": "audit/seed47_common_frame_ica_figure.png",
+  "figure_pdf": "audit/seed47_common_frame_ica_figure.pdf"
+}

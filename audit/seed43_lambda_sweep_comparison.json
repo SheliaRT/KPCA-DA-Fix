@@ -1,0 +1,129 @@
+{
+  "valid_pair": true,
+  "seed": 43,
+  "source_patient_count": 235,
+  "target_patient_count": 160,
+  "target_test_samples": 55,
+  "target_test_patients": 48,
+  "matched_settings": {
+    "source_validation_size": 0.2,
+    "target_test_size": 0.3,
+    "variance_percentile": 10.0,
+    "feature_scope": "all",
+    "image_size": 227,
+    "model": "resnet50d",
+    "classifier_epochs": 100,
+    "early_stopping_patience": 10,
+    "scheduler_patience": 3,
+    "classifier_lr": 0.0001,
+    "weight_decay": 0.001,
+    "batch_size": 16,
+    "no_pretrained": false,
+    "source_validation_threshold": false
+  },
+  "baseline": {
+    "best_epoch": 7,
+    "source_validation_balanced_accuracy": 0.9814814814814814,
+    "test_metrics": {
+      "labels": [
+        0,
+        1
+      ],
+      "confusion_matrix": [
+        [
+          14,
+          0
+        ],
+        [
+          41,
+          0
+        ]
+      ],
+      "accuracy": 0.2545454545454545,
+      "balanced_accuracy": 0.5,
+      "macro_f1": 0.2028985507246377,
+      "sensitivity_by_class": {
+        "0": 1.0,
+        "1": 0.0
+      },
+      "specificity_by_class": {
+        "0": 0.0,
+        "1": 1.0
+      },
+      "positive_label": 1,
+      "sensitivity": 0.0,
+      "specificity": 1.0
+    }
+  },
+  "adapted": {
+    "best_epoch": 9,
+    "source_validation_balanced_accuracy": 0.9814814814814814,
+    "test_metrics": {
+      "labels": [
+        0,
+        1
+      ],
+      "confusion_matrix": [
+        [
+          14,
+          0
+        ],
+        [
+          41,
+          0
+        ]
+      ],
+      "accuracy": 0.2545454545454545,
+      "balanced_accuracy": 0.5,
+      "macro_f1": 0.2028985507246377,
+      "sensitivity_by_class": {
+        "0": 1.0,
+        "1": 0.0
+      },
+      "specificity_by_class": {
+        "0": 0.0,
+        "1": 1.0
+      },
+      "positive_label": 1,
+      "sensitivity": 0.0,
+      "specificity": 1.0
+    },
+    "geometry_diagnostics": {
+      "target_normalized_squared_movement": 0.0210114933036052,
+      "target_variance_ratio_by_component": [
+        0.7557949385967476,
+        0.7782636734456946
+      ],
+      "target_covariance_eigenvalues_initial": [
+        0.028488559561551927,
+        0.09024055814794187
+      ],
+      "target_covariance_eigenvalues_adapted": [
+        0.022040804176425573,
+        0.06833416394348425
+      ],
+      "target_pairwise_distance_spearman": 0.9929730992735816,
+      "source_gene_pixel_collisions": {
+        "genes": 20240,
+        "occupied_pixels": 13077,
+        "genes_in_collisions": 7163,
+        "collision_fraction": 0.35390316205533595
+      },
+      "target_gene_pixel_collisions": {
+        "genes": 235,
+        "occupied_pixels": 109,
+        "genes_in_collisions": 126,
+        "collision_fraction": 0.5361702127659574
+      },
+      "shared_gene_same_pixel_fraction": 0.0
+    }
+  },
+  "test_metric_delta_adapted_minus_baseline": {
+    "accuracy": 0.0,
+    "balanced_accuracy": 0.0,
+    "macro_f1": 0.0,
+    "sensitivity": 0.0,
+    "specificity": 0.0
+  },
+  "interpretation": "One paired seed is a pilot; it does not establish paper-level performance."
+}
