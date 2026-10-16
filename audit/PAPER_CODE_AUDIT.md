@@ -1,5 +1,7 @@
 **Paper–code consistency audit**  
-Reviewed October 16, 2026 · Repository commit `dc0146eff41fb75f3bda4000d0e9caf9705091fa`
+Originally reviewed October 16, 2026 · Research-source commit `dc0146eff41fb75f3bda4000d0e9caf9705091fa`
+
+**Reverified October 16, 2026** against checkout `e1f10260cbfde806d0ded89fb4edfc7d8b4d036a`: all 21 inventoried paper/source files have unchanged SHA-256 hashes. A fresh run of the executable audit checks reproduced the saved results, and the affected implementation paths were rechecked. The recommendations below are proposed repairs, not implemented changes or measured performance gains.
 
 **Overall assessment: the paper and the code are only partially aligned.** The repository implements the main building blocks of KPCA-DA, but the available experiments do not faithfully implement the paper's evaluation protocol. Several differences can materially affect classification accuracy, distribution-alignment measurements, and biological interpretation. I would not treat this checkout as a verified reproduction of the reported results.
 
@@ -33,23 +35,33 @@ Severity indicates consequence: **Critical** findings undermine a central scient
 
 **Most consequential findings**
 
-| ID | Severity | Finding | Main consequence |
-|---|---|---|---|
-| F1 | Critical | Target-test data and labels influence preprocessing and classifier selection. | The stated independent held-out evaluation is not implemented. |
-| F2 | Critical | A notebook trains on target adaptation labels; another oversamples before splitting. | The experiment differs from unsupervised adaptation and includes repeated patients across partitions. |
-| F3 | Critical | Baseline and adapted classifiers receive different training settings. | Accuracy gains cannot be attributed to adaptation alone. |
-| F4 | Critical | Post-hoc target shifts enter reported alignment distances. | Distribution measurements do not isolate KPCA-DA. |
-| F5 | Critical | Implemented “MMD” matches the supplement but differs from the main paper and conventional MMD. | Lower reported loss can mean worse distribution agreement. |
-| F6 | High | The positive trace penalty is minimized despite being described as variance maximization. | The stated preservation mechanism is not established by the objective. |
-| F7 | High | Source and target coordinates are independently rescaled into pixels. | The shared spatial interpretation is not guaranteed. |
-| F8 | High | Grad-CAM indices are assigned incorrect gene names; the adapted attribution pipeline is incomplete. | Biomarker recovery cannot be verified reliably. |
-| F9 | High | ComBat uses misordered genes and applies the source batch ID to target-test samples. | The comparator can be incorrectly corrected. |
-| F10 | High | Active data counts differ from the paper for two tasks. | The same experimental population is not established. |
-| F11 | High | Experiment hyperparameters differ from the supplementary selection protocol. | The reported selected configurations are not reproduced. |
-| F12 | High | CAN, ablation, repeated-run statistics, and external validation workflows are missing. | Major reported results lack a reproducible path in `Scripts`. |
-| F13 | Moderate | Metric code prints stale recall values and mixes metric definitions. | Reported comparisons can contain incorrect or incomparable metrics. |
-| F14 | Moderate | KPCA equations and the standalone transform API differ from implemented behavior. | The mathematical specification and API need clarification. |
-| F15 | High | Environment paths, undefined variables, and mixed notebook state impede clean execution. | The saved experiments cannot be accepted as reproducible runs. |
+| ID | Severity | Finding | Main consequence | Recommended fix |
+|---|---|---|---|---|
+| F1 | Critical | Target-test data and labels influence preprocessing and classifier selection. | The stated independent held-out evaluation is not implemented. | Split patients first; freeze preprocessing from source training and permitted unlabeled adaptation data; select the classifier on source validation. |
+| F2 | Critical | One notebook both trains on target adaptation labels and oversamples before splitting. | The experiment differs from unsupervised adaptation and includes repeated patients across partitions. | Train the unsupervised classifier on source labels only; split original patient IDs before any resampling or augmentation. |
+| F3 | Critical | Baseline and adapted classifiers receive different training settings. | Accuracy gains cannot be attributed to adaptation alone. | Use a strong, shared classifier recipe and equal selection budgets; remove spatial flips from gene-image evaluation. |
+| F4 | Critical | Post-hoc target shifts enter reported alignment distances. | Distribution measurements do not isolate KPCA-DA. | Remove post-hoc shifts and literal metrics; use a fixed, declared projection and distance definition; regenerate figures. |
+| F5 | Critical | Implemented “MMD” matches the supplement but differs from the main paper and conventional MMD. | Lower reported loss can mean worse distribution agreement. | Use full empirical MMD², including the source term and without the absolute value; retune after correcting it. |
+| F6 | High | The positive trace penalty is minimized despite being described as variance maximization. | The stated preservation mechanism is not established by the objective. | Evaluate a bounded penalty for movement from initial coordinates; rename the mechanism and ablate it before adoption. |
+| F7 | High | Source and target coordinates are independently rescaled into pixels. | The shared spatial interpretation is not guaranteed. | Freeze one common pixel coordinate frame; separately test shared-gene orientation/anchoring and measure collisions. |
+| F8 | High | Grad-CAM indices are assigned incorrect gene names; the adapted attribution pipeline is incomplete. | Biomarker recovery cannot be verified reliably. | Carry gene IDs and filter masks with each domain map; run attribution on the adapted classifier and implement the declared ranking. |
+| F9 | High | ComBat uses misordered genes and applies the source batch ID to target-test samples. | The comparator can be incorrectly corrected. | Enforce one ordered, unique shared-gene list and apply the learned target-batch parameters to target-test samples. |
+| F10 | High | Active data counts differ from the paper for two tasks. | The same experimental population is not established. | Recover exact cohort provenance or revise the reported cohort version; document every inclusion and gene-mapping decision. |
+| F11 | High | Experiment hyperparameters differ from the supplementary selection protocol. | The reported selected configurations are not reproduced. | Consume the saved tuning result; hold initial embeddings and MMD bandwidth fixed across candidates; use label-free selection with structural checks. |
+| F12 | High | CAN, ablation, repeated-run statistics, and external validation workflows are missing. | Major reported results lack a reproducible path in `Scripts`. | Build all six task/direction runs, genuine comparators and ablations; generate tables and uncertainty from saved predictions. |
+| F13 | Moderate | Metric code prints stale recall values and mixes metric definitions. | Reported comparisons can contain incorrect or incomparable metrics. | Centralize metrics and label definitions; save actual best weights; derive uncertainty from documented repeated runs. |
+| F14 | Moderate | KPCA equations and the standalone transform API differ from implemented behavior. | The mathematical specification and API need clarification. | Correct the score/coefficient notation; distinguish unadapted KPCA projection from frozen-layout patient inference. |
+| F15 | High | Environment paths, undefined variables, and mixed notebook state impede clean execution. | The saved experiments cannot be accepted as reproducible runs. | Provide one local implementation, portable configuration and a tested dependency lock; verify execution from a fresh process. |
+
+**How the recommendations protect performance**
+
+The objective is credible performance on unseen patients. Removing leakage or strengthening ComBat may reduce the apparent advantage even when the implementation becomes more useful. A repair should therefore pass two separate gates: scientific correctness, then measured predictive value. Correctness repairs are required regardless of whether the old headline score was higher; proposed changes to the method need controlled ablations before becoming defaults.
+
+Preserve the useful design: gene-oriented KPCA, fixed source coordinates during adaptation, unlabeled target adaptation, and reusable patient-image layouts. Avoid changing the loss, regularizer, pixel geometry, classifier and preprocessing simultaneously. Keep a valid no-adaptation baseline and change one component at a time under a common evaluation protocol.
+
+Source validation is suitable for classifier selection, but it is not automatically a useful selector of adaptation strength. If a candidate changes only the target coordinates and leaves source images unchanged, source validation may be identical for every candidate. Even when a common pixel frame changes source images, their accuracy is still only an indirect signal about target performance. F11 therefore specifies a separate label-free adaptation-selection policy. Neither low MMD nor retained variance guarantees accurate target classification.
+
+In particular, the optimized MMD compares **gene-coordinate distributions**, while the prediction task concerns **patients**. Better agreement between those point clouds does not by itself establish better patient representations or preserved class information.
 
 **F1 — The target-test set is used during model development**
 
@@ -64,7 +76,11 @@ The code initially makes a 70/30 split, but then:
 
 Using unlabeled test measurements to fit preprocessing already differs from the claimed deployment protocol. Using their labels to select the model is a stronger breach: the reported test score is no longer an independent final assessment.
 
-**Correction:** Split original patients first, fit preprocessing only on permitted training/adaptation data, and use a source validation partition for classifier selection. Evaluate target-test once after all choices are frozen. For differing gene sets, specify how source-derived scaling is extended to target-only genes; the supplement does not resolve that detail.
+**Recommended fix — enforce the data boundary before fitting anything.** Create an immutable split by original patient ID, then split the source into training and validation patients. Fit source gene filtering, expression scaling and source layout using source training only. Fit the target layout using the unlabeled target-adaptation partition only. For shared genes, apply the fitted source scaling parameters by gene ID. For target-only genes, use adaptation-only statistics under an explicitly documented extension, because source-only scaling is undefined for genes absent from source. Specify a corresponding domain-specific filtering rule; do not silently discard all private genes just to make array shapes match.
+
+Use source validation for classifier checkpoints, learning-rate scheduling and early stopping. Keep target-test labels outside those functions. Serialize the filters, ordered genes, scalers, coordinates and label encoding together. A later refit on all source patients is permissible only under a frozen recipe, including the training duration chosen earlier; it must create a new, traceable fitted artifact.
+
+**Performance rationale and verification:** Shared scaling can preserve cross-domain expression differences that separate test scaling hides. Held-out values can fall outside the training range; choose and document any clipping policy using development data, and check image conversion does not silently wrap or truncate values. Clipping can suppress useful signal, so it is not an automatic fix. Assert patient disjointness and verify that a patient's final image and prediction are unchanged when unrelated test patients are added or removed. This follows the training-only fitting principle in [scikit-learn's leakage guidance](https://scikit-learn.org/stable/common_pitfalls); its [MinMaxScaler documentation](https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.MinMaxScaler.html) explains the out-of-range/clipping behavior.
 
 **F2 — Some experiments use target labels or repeated patients**
 
@@ -86,7 +102,11 @@ These are repeated original sample identities, not merely similar expression pro
 
 The additional [cf_rna_adaptation.ipynb](../Scripts/cf_rna_adaptation.ipynb) similarly augments target samples before splitting (cells 9–10) and trains with `Y2_adapt` (cell 20). This notebook is outside the manuscript's breast-cancer benchmark; it should be labeled as an extension, not used as evidence for the manuscript's unsupervised protocol.
 
-**Correction:** Keep target labels out of optimization and classifier training for the unsupervised experiment. Split by original patient identity before resampling or augmentation; confine any permitted augmentation to training.
+**Recommended fix — separate the unsupervised benchmark from labeled-target extensions.** Remove true target-adaptation labels from classifier training and from tuning APIs in the manuscript benchmark. Stratified partition creation can use labels under the declared split protocol, but the training/tuning code should receive only target features and IDs. Split original patient groups before duplicates, noisy copies or other augmentations are generated. Verify all derived samples retain their original patient ID.
+
+For imbalance, start with source class-weighted cross-entropy or a source-balanced sampler, selected on source validation. Do not automatically combine both, which can overemphasize minority classes. Keep true-target-label training in a separately named supervised or semi-supervised experiment. Pseudo-labeling would also be a new method component requiring its own validation; it is not necessary to repair this defect.
+
+**Performance rationale and verification:** Source-only imbalance handling preserves a legitimate way to improve minority-class performance. Require zero shared original patient IDs across adaptation/test and training/validation, and demonstrate that changing target-adaptation labels cannot change the fitted unsupervised model when split IDs are held fixed. Recompute scores on the repaired partitions; old duplicate-contaminated scores are not a valid performance target.
 
 **F3 — The baseline comparison changes more than domain adaptation**
 
@@ -107,7 +127,11 @@ The source comments explicitly describe the baseline settings as suboptimal. The
 
 Similar differences occur in `claude_code.ipynb` and `claude_code_grad_cam.ipynb`. Consequently, an accuracy difference combines adaptation, optimization, training budget, preprocessing, and model-selection effects.
 
-**Correction:** Use the same classifier configuration, validation rule, initialization/seed policy, and deterministic test preprocessing for every comparator. Change only the adaptation method.
+**Recommended fix — establish a strong common training protocol.** Route baseline, KPCA-DA and ComBat images through the same classifier implementation, initialization policy, source-validation criterion, training budget and deterministic evaluation transforms. The existing AdamW configuration (learning rate 0.0001, batch size 16, up to 100 epochs, patience 10) is a reasonable starting candidate for all three, not an established optimum. Select the shared recipe on source development data and give comparable tuning resources to every method. Use paired seeds and identical patient splits.
+
+Remove random spatial flips unless a separate experiment demonstrates a valid biological invariance; gene-image positions have assigned meanings. With these small cohorts, test a frozen pretrained backbone or frozen batch-normalization statistics as development candidates rather than assuming full fine-tuning is best. CAN needs its actual adaptation loss and training procedure; preserve those method-specific requirements while matching data access, backbone where appropriate, and selection budgets. Clarify any resulting exception to the paper's identical-pipeline statement.
+
+**Performance rationale and verification:** This allows a good classifier to benefit KPCA-DA without attributing optimizer improvements to adaptation. Record the effective settings for every run and compare the two image representations with everything else held constant. Repeated inference on the same saved model/input must be deterministic within the declared execution setup.
 
 **F4 — Alignment distances include an extra, undisclosed coordinate adjustment**
 
@@ -123,13 +147,17 @@ test_ica = test_ica + shift_vector  # via test_ica_aligned in the notebook
 
 Cell 42 calculates Wasserstein distances from this **shifted** `test_ica`. Its comment describes the points as non-aligned, but the variable has already been replaced. Cells 57–58 likewise apply a 10% centroid shift to ComBat's target ICA points before measuring distances. `claude_code.ipynb`, cells 36–37 and 53–54, and `claude_code_grad_cam.ipynb`, cells 33–34 and 49–50, repeat these operations.
 
-An 80% shift guarantees an 80% reduction in centroid distance regardless of KPCA-DA quality. The stored output shows the distance changing from **2.3384 to 0.4677**. It then reports **WD = 0.7010**. These match Figure 3's adapted annotations, approximately **0.468** and **0.7010** (Main p. 7). This is concrete evidence that the available figure-associated measurements include the post-hoc adjustment.
+An 80% shift guarantees an 80% reduction in centroid distance regardless of KPCA-DA quality. The stored output shows the distance changing from **2.3384 to 0.4677**. It then reports **WD = 0.7010**. These match Figure 3's adapted annotations, approximately **0.468** and **0.7010** (Main p. 7). The notebook measurements demonstrably include the adjustment, and their numerical match to the figure is concerning. Without an original run manifest, that match alone does not prove exactly how the published figure was generated.
 
 The extra translation changes the measurement arrays, not the classifier's image tensors. This finding directly concerns distribution plots and distances; it does not by itself explain classification accuracy.
 
 Additional measurement problems: [ICAperformance.ipynb](../Scripts/ICAperformance.ipynb), cells 5–6, independently refits ICA to each domain, producing incomparable axes. [UMAPperformance.ipynb](../Scripts/UMAPperformance.ipynb), cell 10, compares each coordinate array with itself, then prints a combined distance computed from literal constants. Some notebooks average two one-dimensional Wasserstein distances; others take their Euclidean norm. These are different summaries and should not be presented interchangeably as a single defined 2D metric.
 
-**Correction:** Remove post-hoc translations and compute distances from untouched embeddings. Follow the stated ICA fitting protocol consistently, specify the exact distance summary, and regenerate Figure 3 and Table 3 from saved raw outputs.
+**Recommended fix — regenerate measurements without moving the evaluated points.** Delete the post-hoc centroid shifts, self-comparisons and literal distance values. Implement the manuscript's source-fitted ICA projection and apply it unchanged to target samples. Save unshifted projection arrays, projection parameters and patient IDs, then derive both plots and numbers from those arrays. State whether the distance is the mean or Euclidean norm of marginal one-dimensional Wasserstein distances; neither should be mislabeled as a fully computed multivariate Wasserstein distance.
+
+For numerical comparisons between methods, use a common evaluation representation with compatible feature meanings and a common fitted projection/scaling. Independently fitted or whitened projections can change the units of the distance. If methods require different image layouts, show method-specific source-fitted ICA plots as diagnostics and explain the limitation rather than treating their numbers as automatically comparable. Any joint source/target visualization must be separately labeled and excluded from the claimed source-only evaluation protocol.
+
+**Performance rationale and verification:** Alignment is a diagnostic, not the acceptance criterion for a classifier: real differences in class proportions can produce genuine domain separation. Verify that metric functions leave input arrays unchanged and that identical inputs produce zero distance. Regenerate Figure 3/Table 3, including the distinction between example-run and aggregate percentage reductions.
 
 **F5 — The code's loss is not the MMD defined in the main paper**
 
@@ -156,7 +184,11 @@ Dropping the constant source term would preserve gradients **without** the absol
 
 Here the implementation prefers unequal distributions to identical ones. Therefore the lowest `final_mmd` in the lambda search does not necessarily mean the tightest distributional alignment asserted in the supplement.
 
-**Correction:** Reconcile the scientific objective first. If conventional MMD is intended, implement its full expression or optimize the constant-free expression without this absolute value; separately report full MMD². Repeat tuning and affected experiments afterward.
+**Recommended fix — implement the main paper's full empirical MMD².** Use `mean(K_ss) + mean(K_tt) - 2 * mean(K_st)`, including diagonal terms consistently, and remove the absolute value. This is the biased empirical squared-MMD estimator associated with the stated equation. Cache the source term when source coordinates and bandwidth are fixed. Although dropping a constant without the absolute value gives the same optimization gradient, retaining it makes training logs, tuning and reported distances use one interpretable definition. Reconcile Supplement N2E2 with that decision. The distinction between kernel two-sample estimators is described by [Gretton et al.](https://www.jmlr.org/papers/v13/gretton12a.html).
+
+Keep the MMD bandwidth fixed across lambda candidates fitted to the same initial embeddings. Recompute all loss components at the same final optimizer state; do not combine a pre-update total loss with post-update MMD. Retune lambda and step size after the change, because the gradient direction and balance of terms have changed. Do not choose bandwidth merely by whichever gives the smallest MMD across different kernels; a nearly constant kernel can make that comparison uninformative.
+
+**Performance rationale and verification:** This restores a meaningful alignment objective but does not prove better classification. Require zero loss for identical empirical distributions, permutation invariance, the correct two-point counterexample, and gradients agreeing with finite differences on small nontrivial arrays. Investigate tiny floating-point negatives with numerical tolerance rather than adding an absolute value. Compare the corrected loss with the legacy loss and with no adaptation under the repaired evaluation protocol.
 
 **F6 — Minimizing the trace term does not establish variance preservation**
 
@@ -168,7 +200,19 @@ A check using the actual regularizer reduced target embedding variance from **1.
 
 This is a mismatch between the **claimed mechanism and the equations/code**, even though the equation and implementation agree. Simply reversing the sign is not a complete repair because it can make an unconstrained objective unbounded.
 
-**Correction:** Specify and justify a bounded structural-preservation objective, then validate retained variance and biological structure directly. Regenerate the VML ablation after reconciling the objective.
+**Recommended fix — replace the unsupported preservation claim with a bounded, testable mechanism.** Do not simply negate the trace term. As the first candidate, freeze the initial target gene coordinates `Z_t0` and evaluate a normalized reference penalty:
+
+```text
+R_ref = sum((Z_t - Z_t0)^2)
+        / (sum((Z_t0 - mean_rows(Z_t0))^2) + epsilon)
+L = full_MMD_squared + lambda * R_ref
+```
+
+Apply it to all retained target genes, including private genes. For positive lambda it discourages unlimited movement from the reference rather than rewarding expansion or penalizing magnitude around zero. Reject or explicitly handle degenerate initial embeddings. If a rigid orientation step is used under F7, apply it before freezing `Z_t0` and before the candidate search.
+
+This is a **method revision**, not a literal implementation of the present trace equation. Name it reference-coordinate preservation and update the manuscript, supplement and ablation labels together. It discourages deformation; it does not guarantee preserved variance or biological function. With this separable penalty and shared-gene-only MMD, private genes remain at their reference coordinates rather than receiving a learned alignment gradient. Make that behavior explicit. Pairwise/neighborhood preservation could instead propagate shared-gene motion to private genes, but would introduce additional design choices and should be a later, separate ablation.
+
+**Performance rationale and verification:** Compare no adaptation, corrected MMD alone, corrected MMD plus the old trace penalty, and corrected MMD plus this reference penalty. Track normalized displacement, variance ratio, covariance spectrum, neighborhood distortion and pixel collisions alongside classification. These identify collapse or excessive rigidity. Select the new penalty only after its predictive tradeoff is measured; an overly strong reference penalty can prevent useful adaptation.
 
 **F7 — Pixel mapping can discard spatial alignment and does not enforce shared-gene positions**
 
@@ -180,7 +224,13 @@ A direct call to the current coordinate methods maps a point cloud and a transla
 
 The code correctly preserves the target layout across future target samples. That narrower guarantee should be distinguished from preserving gene identity across source and target images. Adaptation changes spatial layout; image intensities remain normalized original expression values rather than corrected expression measurements.
 
-**Correction:** Use an explicitly defined common coordinate-to-pixel mapping and assess named shared-gene correspondence. Document whether the intended output is an adapted spatial layout or a harmonized expression matrix.
+**Recommended fix — separate a common coordinate frame from named-gene correspondence.** Fit one shared coordinate-to-pixel transformation using source-training and target-adaptation embeddings, then freeze it for future samples. Define rotation, translation, scale, grid resolution, rounding and collision aggregation explicitly. A shared isotropic scale with padding is a useful candidate when preserving relative geometry matters. Fix the whole conversion path: `coordinate_binning` calls `scale_coordinates` again, so changing only `_calculate_coords` would leave independent rescaling in place. Assignment-based discretization must obey the same coordinate-frame contract.
+
+A common frame alone does not put each shared gene in the same pixel: MMD is invariant to point permutations. As a separate candidate, match shared genes by ID and use a rigid orthogonal Procrustes orientation before adaptation to remove arbitrary KPCA orientation differences. This uses no target labels and preserves within-domain distances under the rigid transform. Check rank/degeneracy and do not mistake SciPy's returned `scale` for a multiplier; [its documentation](https://docs.scipy.org/doc/scipy/reference/generated/scipy.linalg.orthogonal_procrustes.html) defines that value as a sum of singular values. A soft paired-gene anchor may then be ablated if correspondence remains poor.
+
+If the paper intends *exactly identical* shared-gene pixels, implement an explicit shared anchor map and revise the method accordingly. Hard anchors can bypass the learned movement of shared genes, so they should not be imposed silently. Otherwise narrow the claim to a fixed map within each domain and measured, approximate cross-domain correspondence. Continue to describe the output as an adapted layout, not corrected expression.
+
+**Performance rationale and verification:** Joint bounds can compress the source into a small image region when target coordinates have extreme ranges. Measure occupied pixels, collision counts, shared-gene pixel displacement and classification before selecting the mapping; set any resolution or outlier policy using development data. Test fixed-map inference and verify that discretization does not silently renormalize each domain. Compare shared scaling, rigid orientation and soft/hard anchors as distinct changes.
 
 **F8 — Gene attribution is not consistently mapped back to the right genes**
 
@@ -197,7 +247,11 @@ The available workflows have several concrete problems:
 
 Consequently, the supplied code does not reliably establish the identities or rankings behind the claimed recovered biomarkers. This is not an independent judgment about those genes' biology.
 
-**Correction:** Preserve the ordered gene list alongside every fitted map, keep filter indices, explicitly select the source or target map, and implement one documented ranking/threshold rule. Regenerate the gene lists and overlap analyses from a complete adapted-model attribution run.
+**Recommended fix — make attribution consume the same fitted artifact as inference.** Persist each domain's ordered retained gene IDs, filter mask, pixel coordinates, collision membership and class encoding. Give the attribution helper an explicit domain/map interface instead of relying on the baseline-only `coords()` method. Run Grad-CAM on the final adapted classifier and target images using its actual target map; map selected positions back through the retained gene list, never an unrelated or unfiltered array.
+
+Resolve the paper's two attribution definitions. For the main claim, implement mean target CAM scores per subtype, explicit score normalization, descending ranking and a declared top-ten/tie policy. Document how subtype groups are formed. Using target labels for a frozen post-hoc analysis must not feed back into model, threshold or checkpoint selection. If thresholded source-training attribution at 0.5 is also useful, report it as a separate analysis and update Supplement Note 4. Genes sharing a pixel share attribution evidence; report all collision members and the ambiguity rather than implying CAM uniquely separates them.
+
+**Performance rationale and verification:** Repairing gene identities improves interpretability without requiring a change to the classifier. Verify recovery of known gene IDs on a synthetic filtered map, including a collision case. Assess ranking stability across seeds and regenerate overlap analyses. Do not tune the model to recover PAM50/TCGA-DE benchmark genes and then call the same overlap an independent validation.
 
 **F9 — ComBat gene order and test batch identity are incorrect in the integrated branches**
 
@@ -217,7 +271,9 @@ For example, the survival branch would pair source `A1CF` with target `DDR1`. Co
 
 Separately, the integrated notebooks identify source as batch **1** and adaptation target as batch **2**, but pass batch **1** for target-test samples to `neuroCombatFromTraining`. `CombatFit.ipynb` repeats this wrong test batch ID and uses a **20%** test split rather than 30%.
 
-**Correction:** Select both matrices by one identical ordered gene list; assert equality before combining. Apply target batch 2 parameters to target-test samples. Reevaluate the comparator after both corrections.
+**Recommended fix — align rows explicitly and reuse the correct learned batch.** Resolve duplicated gene identifiers by one documented policy, construct a single ordered list of shared unique genes, and reindex both matrices to that list. Assert exact gene-name equality row by row before fitting ComBat. Fit its parameters on permitted source-training/adaptation data, apply batch 2 parameters to target-test samples, and avoid refitting on those test samples or requiring unavailable target outcome covariates. Use the same patient split as the other methods, including the declared 30% test fraction.
+
+**Performance rationale and verification:** A corrected ComBat may become substantially stronger; that is necessary for a meaningful comparison. Test that input column/row reordering followed by ID-based alignment produces the same correction, and verify the target batch identifier at inference. Report both the main all-available-genes KPCA-DA comparison and a shared-genes-only diagnostic if feasible, so any benefit of retaining private genes is distinguishable from the adaptation objective itself.
 
 **F10 — Active datasets differ from the paper's reported cohorts**
 
@@ -236,7 +292,11 @@ The survival inputs contain **20,502** and **12,587** gene rows, versus the manu
 
 Files already contain `long`/`short` labels. No code in `Scripts` establishes the described DSS thresholds, death-status handling, or exclusions. Likewise, the claimed Desmedt BioMart probe-to-HGNC conversion is not implemented there. Counts alone cannot determine whether undocumented exclusions were justified.
 
-**Correction:** Provide patient IDs, cohort construction and exclusion logic, gene/probe mapping, and a manifest identifying the exact files for every reported result. Reconcile all pre/post-filter counts in the manuscript.
+**Recommended fix — establish a versioned cohort manifest before benchmarking.** Record input hashes, patient IDs, labels, source accession/version, inclusion/exclusion reasons, survival-time units and censoring rules, probe-to-gene mapping version, duplicate-gene handling and pre/post-filter counts. Reconstruct the paper's cohorts if the required original inputs are available. Otherwise identify the local cohorts as a different dataset version and update the paper's counts and result claims after rerunning them. Do not add or discard patients merely to obtain a desired count or score.
+
+Investigate the 236-gene GEO input's provenance before treating it as the manuscript's intended expression dataset. Resolve the duplicated TCGA survival gene consistently across KPCA-DA, ComBat and attribution. Keep label derivation separate from feature preprocessing so exclusions can be audited.
+
+**Performance rationale and verification:** Cohort or gene-set changes can change task difficulty more than a model change. Freeze the manifest before tuning, check patient-level uniqueness and class counts, and generate every table's sample/feature counts from that manifest. Evaluate any recovered full cohort as a new run; do not mix its scores with the existing subsets.
 
 **F11 — Preprocessing and hyperparameter settings do not reproduce the supplement**
 
@@ -250,7 +310,13 @@ Supplement Note 2 specifies six lambdas, 500 SGD steps, and learning rate 0.001.
 
 The reusable module supports the intended automatic gamma calculation, but that does not establish that the experiments used the supplement's selected values. The fixed gamma values themselves were not recomputed on the full datasets during this audit.
 
-**Correction:** Save and pass the actual tuning result into the final fit, using the same input matrices and declared settings. Report every task/direction's KPCA gamma separately from its MMD gamma.
+**Recommended fix — define one reproducible selection policy and consume its result.** First reconcile filtering across all image-based branches: implement the supplement's source-training variance rule (retain approximately 70%, with explicit handling of ties and constant genes), then document the adaptation-only rule for target-private genes. If keeping all genes performs better in development, record that as a tested protocol revision rather than leaving filtering different between baseline and adaptation.
+
+For faithful reproduction of the stated search, use all six lambdas `[0.0001, 0.001, 0.01, 0.1, 1, 10]`, 500 steps and learning rate 0.001. For the corrected objective/regularizer, treat that grid as a starting point rather than reusing the old optimum as evidence. Cache a single pair of initial KPCA embeddings and one MMD bandwidth per split, so lambda candidates do not also change coordinates or kernels. Record source/target KPCA kernel settings separately from MMD bandwidth. Use the saved selected configuration in the final fit; remove manual overwrites. Persist any new regularizer/anchor weights separately.
+
+For the unsupervised runner, prohibit target-label accuracy selection: the current `tune_lambda` API can switch to it when labels are supplied. Use a predeclared label-free criterion: screen candidates for nonfinite values, embedding collapse, excessive reference distortion and unacceptable image crowding; among eligible candidates compare full MMD² using the fixed kernel. Set these screening thresholds on development data before inspecting final target performance, record rejected candidates, and keep an explicit no-adaptation fallback if none is eligible. Minimum MMD alone remains an imperfect proxy for classification.
+
+**Performance rationale and verification:** Source validation selects the classifier, but can be insensitive to target-only adaptation. Where source metadata permit, nested source-only development experiments that hold out a source site/batch as a proxy domain can assess preservation weights and the selection rule using labels from that held-out source group. Artificial shifts can support exploratory checks but do not establish real target performance. Freeze the rule before final target evaluation. Verify the final run reproduces the selected candidate's embeddings, bandwidth and final-state loss components within numerical tolerance.
 
 **F12 — Several central results have no reproducible implementation in `Scripts`**
 
@@ -266,7 +332,11 @@ I found no complete workflow for the following manuscript claims:
 
 Missing implementation means **unverifiable from this checkout**, not proof that the external experiment was never performed.
 
-**Correction:** Supply executable runners, exact configurations, run-level outputs, external benchmark provenance, and a table/figure generation script. Explain the unit of replication and what each error bar represents.
+**Recommended fix — reconstruct the complete evidence chain.** Create configurations for all six task/direction combinations and a runner that stores split IDs, seeds, effective settings, fitted artifacts, probabilities, labels and unshifted alignment outputs. Implement all claimed ablations with names matching their actual objectives, including the revised regularizer if adopted. Supply a runnable CAN implementation with its provenance, configuration and checkpoint; otherwise mark that comparator unavailable instead of presenting unexplained prediction files as a reproduced training result.
+
+Generate Tables 1–3, Figure 3, ROC legends and attribution comparisons from those saved records. Recover external gene-benchmark construction and analysis settings before claiming biological validation. Use paired method runs on identical patients/splits and disclose whether repetition changes initialization, the split, or both. A few seeds can screen candidates; choose a final repetition budget in advance and explain the limits of precision.
+
+**Performance rationale and verification:** Report per-task/direction effects, macro-F1 or balanced accuracy and minority-class outcomes, not only a pooled mean. Seed-to-seed variability is not a confidence interval over new patients. If estimating patient uncertainty, use a declared patient-level procedure and explain what is held fixed. Do not treat correlated metrics or overlapping repeated splits as independent samples for a Wilcoxon test; justify the pairing/unit and any multiple-comparison handling. Because existing target results have already been inspected, disclose their reuse; a fresh untouched cohort or reserved evaluation set provides stronger final confirmation when available.
 
 **F13 — Metric reporting contains stale values and inconsistent definitions**
 
@@ -278,7 +348,11 @@ In `claude_code.ipynb`, cell 41 stores adapted results as `preds`/`trues`, but c
 
 There is also a checkpoint bug in `test_kPCADA.ipynb`, cell 46, and `claude_code_grad_cam.ipynb`, cell 38: `net.state_dict().copy()` does not clone tensor storage. Later updates can overwrite the supposed best checkpoint. Stored `test_kPCADA` output reports “best” accuracy **0.653**, then final accuracy **0.612** after restoration, consistent with that problem.
 
-**Correction:** Compute each method's metrics from explicitly named prediction records, define averaging/positive classes, and clone checkpoint tensors or use a deep copy. Compute uncertainty from run-level results.
+**Recommended fix — calculate metrics once from explicit prediction records.** Replace notebook-global metric variables with one evaluator receiving patient ID, method/run ID, true label, predicted label, class probabilities and ordered class names. Declare binary positive classes explicitly and use consistent sensitivity/specificity definitions; state the averaging rule for multiclass results. Compute ROC-AUC from scores/probabilities with the same class order. Choose any decision threshold on source validation under a frozen policy.
+
+Save the best classifier immediately or clone its tensors using `deepcopy(model.state_dict())`; a shallow dictionary copy is insufficient, as the [PyTorch checkpoint guidance](https://docs.pytorch.org/tutorials/beginner/saving_loading_models.html) explains. Restore that checkpoint before producing predictions, and derive uncertainty only from stored run-level results.
+
+**Performance rationale and verification:** Use balanced accuracy or macro-F1 as a declared primary development metric where imbalance matters, alongside the paper's accuracy and per-class outcomes. Verify the evaluator on a known confusion matrix and check that a saved/restored checkpoint reproduces its predictions. Assert prediction IDs and class encodings match the evaluation manifest. This prevents apparent gains caused by stale variables or majority-class dominance.
 
 **F14 — The KPCA equations and standalone transform API need reconciliation**
 
@@ -288,7 +362,11 @@ The separate [KPCA_DA.transform](../Scripts/kpcada.py#L345) API also returns a p
 
 The main image workflow uses `transform_target` with stored pixel coordinates, so this API issue is separate from its valid reuse of a learned target layout.
 
-**Correction:** Distinguish KPCA coefficients, gene scores, and patient image conversion in the paper/API. Rename or implement the standalone transform behavior so users cannot mistake an unadapted projection for adapted inference.
+**Recommended fix — preserve standard KPCA scores and make inference semantics explicit.** Keep the implemented training scores `V * sqrt(Lambda)` unless a separately justified method change is intended. Correct the manuscript to distinguish them from kernel-expansion coefficients `V / sqrt(Lambda)`. If projections are exposed, retain distinct source and target fitted KPCA estimators instead of one overwritten estimator, and store optimized target gene coordinates separately.
+
+Rename the current standalone method to indicate an unadapted target KPCA projection, or deprecate it in favor of explicit APIs. Expose patient inference as conversion of expression values through the frozen target gene-to-pixel map, with gene-ID reordering and a declared missing/unknown-gene policy. A new patient is not a new gene row in the original genes-by-patients KPCA problem; do not append patients and refit KPCA during deployment. There is no learned out-of-sample extension of the optimized gene coordinates in the current algorithm, so do not promise one implicitly.
+
+**Performance rationale and verification:** This avoids replacing a valid coordinate convention merely to match an incorrect equation. Check score/coefficient identities numerically, round-trip the saved mapping artifact, and verify patient-order/batch invariance at inference. Any future out-of-sample gene embedding requires a separate method and evaluation.
 
 **F15 — The saved notebooks do not constitute a clean, portable experiment**
 
@@ -296,7 +374,11 @@ There is no dependency specification, lockfile, or run guide. `kpcada.main` uses
 
 `claude_code.ipynb` references undefined `y_adapt_enc`. `test_kPCADA.ipynb`, cell 26, calls undefined `cam_image3`. Its optional cell 8 tries to apply a source-fitted UMAP to target expression vectors with a different number of genes. Execution counts and saved outputs are mixed, and some stored outputs show failures or interruption. These issues mean syntactically valid cells are not sufficient evidence of an executable experiment.
 
-**Correction:** Resolve paths relative to the repository, import the local modules explicitly, pin dependencies, remove undefined/stale state, and demonstrate a fresh-kernel run producing all claimed artifacts.
+**Recommended fix — make one configured implementation executable from a clean process.** Move experiment orchestration into a small runner using the local `kpcada` and image-transformer implementations, with notebooks calling that runner for analysis. Resolve data/output paths from configuration and the repository root; remove imports from unrelated checkouts. Remove undefined branches and stale globals, and give unsupported optional methods explicit input checks.
+
+Create a dependency specification and lock a tested environment, including PyTorch/timm/scikit-learn versions and the pretrained-weight identifier. Set and record Python, NumPy, PyTorch and estimator seeds, hardware and determinism settings. Record the source commit, input hashes and configuration with each run. Dependency versions used for this audit are evidence of the audit environment, not proof of the original experiment environment.
+
+**Performance rationale and verification:** Start with a CPU/small-data end-to-end smoke run covering fit, save, reload, inference, metrics and attribution, then a real-cohort development pilot before launching all directions. Check imports resolve to this checkout and a fresh process can regenerate artifacts without manually executed cells. Pin the successful environment; make any dependency upgrades separately so they cannot silently change benchmark behavior.
 
 **Additional inconsistencies within the paper package**
 
@@ -320,12 +402,17 @@ The audit artifacts are:
 
 All ten Python files and code cells in all nine notebooks parse. This check establishes syntax only. The small numerical checks reproduce the loss counterexample, regularizer shrinkage, pixel-rescaling invariance, post-hoc centroid reduction, standalone transform discrepancy, KPCA score convention, mixed loss endpoints, patient overlap, cohort counts, and ComBat gene-order mismatch. They do not reproduce clinical performance estimates.
 
-The most useful repair order is:
+The recommended implementation and performance-check sequence is:
 
-1. Freeze patient IDs and split original patients; remove target-test model selection and target-label training from the unsupervised experiment.
-2. Reconcile the MMD objective and variance-preservation claim across the main paper, supplement, and code.
-3. Correct pixel mapping, gene-name attribution, and ComBat gene ordering/batch identity.
-4. Run every comparator with one shared classifier protocol; retain raw alignment measurements without extra translations.
-5. Automate all tasks, ablations, seeds, metric aggregation, and attribution validation; regenerate the paper's tables and figures from those outputs.
+| Stage | Changes to make together | Evidence required before proceeding |
+|---|---|---|
+| 1. Establish trustworthy runs | Freeze cohorts/splits; remove leakage and target-label training; repair imports, checkpoints, metrics and ComBat; adopt the common classifier protocol. | Patient-disjoint manifests, fresh-process execution and reliable saved predictions. Historical contaminated scores remain historical, not a target to match. |
+| 2. Establish valid controls | Run no adaptation and the legacy adaptation objective under the repaired protocol, with the same gene policy and classifier budget. | A fair reference for the effect of adaptation. Label the legacy objective explicitly; this is a diagnostic control, not endorsement of its scientific interpretation. |
+| 3. Repair and ablate the objective | Compare legacy loss versus full MMD²; then compare no regularizer, old trace regularization and reference preservation. Hold pixel conversion fixed while isolating these effects. | Correct loss/gradient checks, stable optimization, geometry diagnostics and development classification results. Retune each changed objective under the same permitted selection budget. |
+| 4. Evaluate pixel geometry | Compare existing versus shared coordinate scaling, then separately add rigid orientation or gene anchoring if justified. | Stable inference, measured correspondence/collisions and development performance. Check the selected objective and map together because their effects can interact. |
+| 5. Freeze and evaluate | Freeze the method, selection rule and classifier recipe; run all directions and comparators with paired splits/seeds. | Per-direction predictive metrics, minority-class outcomes, documented uncertainty and raw alignment measurements. Do not select a new variant from final-test outcomes and still call that test untouched. |
+| 6. Rebuild the scientific claims | Run adapted attribution and external validation; generate every table/figure and synchronize the main paper and supplement. | Traceable patient predictions, gene identities, configuration versions and claims supported by the new results. |
+
+For selecting a method revision, predeclare the primary predictive metric and a practically meaningful tolerance for deterioration on development tasks, alongside minority-class checks. Prefer the simpler candidate when differences are inconclusive. A lower MMD or more attractive plot is insufficient grounds to adopt a revision. If final evaluation does not show improvement, report that result and distinguish reliable reproduction from a successful method improvement; do not retain leakage or a broken comparator to preserve a performance claim.
 
 The existing implementation is a useful starting point, especially its gene-oriented KPCA, target-only optimization, automatic-bandwidth helper, and reusable target image layout. The discrepancies above must be resolved before the reported accuracy gains, alignment reductions, and recovered biomarker lists can be accepted as reproduced by this codebase.
