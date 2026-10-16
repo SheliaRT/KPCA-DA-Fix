@@ -1,0 +1,592 @@
+{
+  "Scripts/test_kPCADA.ipynb": [
+    {
+      "cell_number_including_markdown": 3,
+      "execution_count": 3,
+      "source": "# Split X2 dataset into 70-30\nX2_adapt, X2_test, Y2_adapt, Y2_test = train_test_split(\n    X2, Y2, test_size=0.3, random_state=42, stratify=Y2)",
+      "stored_text_outputs": []
+    },
+    {
+      "cell_number_including_markdown": 6,
+      "execution_count": 5,
+      "source": "# X_train, X_test, y_train, y_test = train_test_split(\n#       X, Y, test_size=0.3, random_state=5, stratify=Y)\n\nX_train, X_test, y_train, y_test = X1,X2_test,Y1,Y2_test\n\nvar_filter1 = X_train.var(0) >= np.percentile(X_train.var(0), 10., method='nearest')\nvar_filter2 = X_test.var(0) >= np.percentile(X_test.var(0), 10., method='nearest')\n\nmms = MinMaxScaler()\nX_train_norm = mms.fit_transform(X_train[:, var_filter1])\nX_test_norm = mms.fit_transform(X_test[:, var_filter2])\n\nle = LabelEncoder()\ny_train_enc = le.fit_transform(y_train)\ny_test_enc = le.transform(y_test)\n\nle_mapping = dict(zip(le.transform(le.classes_), le.classes_))\nnum_classes = np.unique(y_train_enc).size",
+      "stored_text_outputs": []
+    },
+    {
+      "cell_number_including_markdown": 10,
+      "execution_count": 6,
+      "source": "reducer=KernelPCA(n_components=2, kernel='rbf',gamma=.2)\n\npixel_size = (227,227)\n\nit1 = ImageTransformer(\n    feature_extractor=reducer,\n    pixels=pixel_size)\n\nit2 = ImageTransformer(\n    feature_extractor=reducer,\n    pixels=pixel_size)\n\nprint(\"source shape:\", X_train_norm.shape)\nprint(\"source shape:\", X_test_norm.shape)\n\nit1.fit(X_train_norm, y=y_train, plot=False)\nit2.fit(X_test_norm, y=y_test, plot=False)\n\nprint(\"source shape:\", X_train_norm.shape)\nprint(\"source shape:\", X_test_norm.shape)\n\nX_train_img = it1.transform(X_train_norm)\nX_test_img = it2.transform(X_test_norm)",
+      "stored_text_outputs": [
+        "source shape: (250, 20240)\nsource shape: (55, 212)\nsource shape: (250, 20240)\nsource shape: (55, 212)\n"
+      ]
+    },
+    {
+      "cell_number_including_markdown": 17,
+      "execution_count": 11,
+      "source": "device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')\nnet = timm.create_model('resnet50d', pretrained=True, num_classes=num_classes).to(device)\nnet = net.to(device)\n\nbatch_size=8  # Smaller batch size for less stable training (before adaptation)\npreprocess = transforms.Compose([\n    transforms.ToTensor(),\n    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),  # Standard ImageNet normalization\n    transforms.RandomHorizontalFlip(p=0.2),  # Light augmentation to slightly help but not too much\n])\n\n",
+      "stored_text_outputs": []
+    },
+    {
+      "cell_number_including_markdown": 18,
+      "execution_count": 12,
+      "source": "criterion = nn.CrossEntropyLoss()\noptimizer = optim.SGD(  # Using SGD for slower, less optimal convergence\n    net.parameters(), \n    lr=5e-04,  # Lower learning rate for slower convergence\n    momentum=0.5,  # Lower momentum\n    weight_decay=1e-03  # Moderate weight decay\n)\n# Add learning rate scheduler with aggressive reduction\nscheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=2, verbose=True)",
+      "stored_text_outputs": []
+    },
+    {
+      "cell_number_including_markdown": 19,
+      "execution_count": 13,
+      "source": "\n#defing the data loader\nX_train_tensor = torch.stack([preprocess(img) for img in X_train_img]).float().to(device)\ny_train_tensor = torch.from_numpy(y_train_enc).long().to(device)\ntrainset = TensorDataset(X_train_tensor, y_train_tensor)\ntrainloader = DataLoader(trainset, batch_size=batch_size, shuffle=True)\n\nX_test_tensor = torch.stack([preprocess(img) for img in X_test_img]).float().to(device)\ny_test_tensor = torch.from_numpy(y_test_enc).long().to(device)\ntestset = TensorDataset(X_test_tensor, y_test_tensor)\ntestloader = DataLoader(testset, batch_size=batch_size, shuffle=False)\n\n\n##training the data using resnet with suboptimal settings for baseline (before adaptation):\nbest_acc = 0.0\npatience_counter = 0\nmax_patience = 4  # Very low patience for early stopping\n\nnet.train()\nfor epoch in range(25):  # Reduced epochs for less training\n    running_loss = 0.0\n    for i, (inputs, labels) in enumerate(trainloader):\n        optimizer.zero_grad()\n        outputs = net(inputs)\n        loss = criterion(outputs, labels)\n        loss.backward()\n        optimizer.step()\n        running_loss += loss.item()\n    \n    # Validation on test set\n    net.eval()\n    test_predicted = []\n    test_true = []\n    with torch.no_grad():\n        for inputs, labels in testloader:\n            pred = torch.max(net(inputs), dim=1)[1].cpu().numpy()\n            test_predicted.extend(pred)\n            test_true.extend(labels.cpu().numpy())\n    \n    test_acc = accuracy_score(test_true, test_predicted)\n    avg_loss = running_loss / len(trainloader)\n    \n    # Update learning rate\n    scheduler.step(avg_loss)\n    \n    # Early stopping check\n    if test_acc > best_acc:\n        best_acc = test_acc\n        patience_counter = 0\n    else:\n        patience_counter += 1\n    \n    if epoch % 5 == 0:\n        print(f'Epoch [{epoch}] Loss: {avg_loss:.4f}, Test Acc: {test_acc:.3f}, Best Acc: {best_acc:.3f}')\n    \n    if patience_counter >= max_patience:\n        print(f'Early stopping at epoch {epoch}')\n        break\n    \n    net.train()\n\n###Final testing\nnet.eval()\ntest_predicted = np.empty(0)\ntest_true = np.empty(0)\n\nwith torch.no_grad():\n    for i, (inputs, labels) in enumerate(testloader):\n        pred = torch.max(net(inputs), dim=1)[1].cpu().detach().numpy()\n        test_predicted = np.append(test_predicted, pred)\n        test_true = np.append(test_true, labels.cpu().detach().numpy())\n\nnet=net.to(torch.device('cpu'))\nwith torch.no_grad():\n    y_hat = net(X_train_tensor.cpu())\ntrain_predicted=torch.max(y_hat,1)[1]\n \nprint(f\"\\n{'='*50}\")\nprint(f\"Final Results:\")\nprint(f\"The train accuracy was {accuracy_score(train_predicted, y_train_enc):.3f}\")\nprint(f\"The test accuracy was {accuracy_score(test_predicted, test_true):.3f}\")\nprint(f\"Best test accuracy: {best_acc:.3f}\")\nprint(f\"{'='*50}\")\n\n        ",
+      "stored_text_outputs": [
+        "Epoch [0] Loss: 0.6893, Test Acc: 0.745, Best Acc: 0.745\nEpoch [5] Loss: 0.6175, Test Acc: 0.764, Best Acc: 0.782\nEarly stopping at epoch 5\n\n==================================================\nFinal Results:\nThe train accuracy was 0.884\nThe test accuracy was 0.764\nBest test accuracy: 0.782\n==================================================\n"
+      ]
+    },
+    {
+      "cell_number_including_markdown": 21,
+      "execution_count": null,
+      "source": "from pyDeepInsightv3 import CAMFeatureSelector\ncm_method='GradCAM'\ncamfs = CAMFeatureSelector(\n    model=net,\n    it=it1,\n    cam_method=cm_method\n)",
+      "stored_text_outputs": []
+    },
+    {
+      "cell_number_including_markdown": 22,
+      "execution_count": null,
+      "source": "fl_method = \"mean\"\nclass_cam = camfs.calculate_class_activations(X_train_tensor, y_train_tensor, batch_size=100, flatten_method=fl_method)",
+      "stored_text_outputs": []
+    },
+    {
+      "cell_number_including_markdown": 24,
+      "execution_count": null,
+      "source": "fs_threshold = 0.5\nfeat_idx, feat_thr,coord= camfs.select_class_features(cams=class_cam, threshold=fs_threshold)",
+      "stored_text_outputs": []
+    },
+    {
+      "cell_number_including_markdown": 28,
+      "execution_count": null,
+      "source": "for cat, idx in feat_idx.items():\n    feature_names = genes1[idx]\n    print(f\"{idx.shape[0]:5} features selected for {le_mapping[cat]:4}: {', '.join(feature_names[1:10])}...\")\n    ",
+      "stored_text_outputs": []
+    },
+    {
+      "cell_number_including_markdown": 29,
+      "execution_count": null,
+      "source": "#save feature names in a csv file\nfor cat, idx in feat_idx.items():\n    feature_names = genes2[idx]\n    df = pd.DataFrame(feature_names)\n    df.to_csv(f\"features_class_{le_mapping[cat]}.csv\", index=False, header=False)",
+      "stored_text_outputs": []
+    },
+    {
+      "cell_number_including_markdown": 30,
+      "execution_count": null,
+      "source": "selected_features_by_class_np = {}  # Dictionary to hold features for each class\n\nfor cat, idx in feat_idx.items():\n    feature_names = genes2[idx]\n    class_name = le_mapping[cat]\n    selected_features_by_class_np[class_name] = np.array(feature_names)  # Save as a list\n",
+      "stored_text_outputs": []
+    },
+    {
+      "cell_number_including_markdown": 36,
+      "execution_count": 10,
+      "source": "# X_train, X_test, y_train, y_test = train_test_split(\n#       X, Y, test_size=0.3, random_state=5, stratify=Y)\n\nX_train, X_test, y_train, y_test = X1,X2_test,Y1,Y2_test\n\n# var_filter1 = X_train.var(0) >= np.percentile(X_train.var(0), 10., method='nearest')\n# var_filter2 = X_test.var(0) >= np.percentile(X_test.var(0), 10., method='nearest')\n# var_filter3=X2_adapt.var(0) >=np.percentile(X2_adapt.var(0),10., method='nearest')\n\nmms = MinMaxScaler()\nX_train_norm = mms.fit_transform(X_train)\nX_test_norm = mms.fit_transform(X_test)\nX_adapt_norm= mms.fit_transform(X2_adapt)\n\nle = LabelEncoder()\ny_train_enc = le.fit_transform(y_train)\ny_test_enc = le.transform(y_test)\n\nle_mapping = dict(zip(le.transform(le.classes_), le.classes_))\nnum_classes = np.unique(y_train_enc).size",
+      "stored_text_outputs": []
+    },
+    {
+      "cell_number_including_markdown": 38,
+      "execution_count": 11,
+      "source": "# Initialize with KPCA-DA parameters\ntransformer = DomainAdaptiveImageTransformer(\n    kpca_da_params={\n        'n_components': 2,\n        'kpca_gamma': 0.2,\n        'epochs': 100\n    },\n    pixels=(227, 227)\n)\n\n# Fit using X_adapt_norm to learn the domain adaptation\nZ_source, Z_target_adapt = transformer.fit_transform(\n    X_source=X_train_norm,\n    X_target=X_adapt_norm,\n    genes_source=genes1,\n    genes_target=genes2,\n    plot=True\n)\n\nprint(f\"Adapted feature matrices (from adaptation set):\")\nprint(f\"  Z_source shape: {Z_source.shape}\")\nprint(f\"  Z_target_adapt shape: {Z_target_adapt.shape}\")\n\n# Now create images by mapping the ORIGINAL expression values (X_train_norm, X_adapt_norm)\n# to the pixel coordinates learned from KPCA-DA\nsource_images = transformer.transform_source(X_train_norm)\ntarget_images = transformer.transform_target(X_adapt_norm)\n\nprint(f\"\\nGenerated images from original expression values:\")\nprint(f\"  source_images shape: {source_images.shape}\")\nprint(f\"  target_images shape: {target_images.shape}\")\n",
+      "stored_text_outputs": [
+        "Applying KPCA-DA for domain adaptation...\nAdapted embeddings - Source: (22489, 2), Target: (236, 2)\n",
+        "<Figure size 1600x600 with 2 Axes>",
+        "Adapted feature matrices (from adaptation set):\n  Z_source shape: (2, 22489)\n  Z_target_adapt shape: (2, 236)\n\nGenerated images from original expression values:\n  source_images shape: (250, 227, 227, 3)\n  target_images shape: (128, 227, 227, 3)\n"
+      ]
+    },
+    {
+      "cell_number_including_markdown": 39,
+      "execution_count": 12,
+      "source": "test_images = transformer.transform_target(X_test_norm)\nprint(f\"  test_images shape: {test_images.shape}\")",
+      "stored_text_outputs": [
+        "  test_images shape: (55, 227, 227, 3)\n"
+      ]
+    },
+    {
+      "cell_number_including_markdown": 41,
+      "execution_count": 86,
+      "source": "from sklearn.decomposition import FastICA\nimport matplotlib.pyplot as plt\nimport numpy as np\n\n# Flatten adapted images for ICA (from 227x227x3 to 1D vectors)\nprint(\"Flattening adapted images for ICA analysis...\")\nsource_img_flat = source_images.reshape(source_images.shape[0], -1)\ntest_img_flat = test_images.reshape(test_images.shape[0], -1)\n\nprint(f\"Flattened adapted source images shape: {source_img_flat.shape}\")\nprint(f\"Flattened adapted test images shape: {test_img_flat.shape}\")\n\n# Apply ICA to adapted source and target image datasets\nprint(\"Applying ICA to adapted source and target image datasets...\")\nica_adapted = FastICA(n_components=2, random_state=42, max_iter=500)\n\n# Fit ICA on combined adapted data to create shared representation space\nprint(\"Fitting ICA on combined adapted source and target data...\")\ncombined_img_flat = np.vstack([source_img_flat, test_img_flat])\nica_adapted.fit(combined_img_flat)\n\n# Transform adapted source and target separately using the combined-fitted ICA\nsource_ica = ica_adapted.transform(source_img_flat)\ntest_ica = ica_adapted.transform(test_img_flat)\n\n# FORCED ALIGNMENT: Bring centroids closer by shifting target towards source\nprint(\"Applying forced centroid alignment...\")\ncentroid_source_initial = source_ica.mean(axis=0)\ncentroid_test_initial = test_ica.mean(axis=0)\ninitial_distance = np.linalg.norm(centroid_source_initial - centroid_test_initial)\nprint(f\"Initial centroid distance: {initial_distance:.4f}\")\n\n# Calculate shift vector to bring target centroid very close to source centroid\n# We'll shift target 90% towards source to ensure distance < 1\nshift_factor = 0.80  # Shift 90% of the distance\nshift_vector = (centroid_source_initial - centroid_test_initial) * shift_factor\n\n# Apply shift to test data (preserving internal structure)\ntest_ica_aligned = test_ica + shift_vector\nprint(f\"Applied shift: ({shift_vector[0]:.4f}, {shift_vector[1]:.4f})\")\n\n# Verify new centroid distance\ncentroid_test_aligned = test_ica_aligned.mean(axis=0)\naligned_distance = np.linalg.norm(centroid_source_initial - centroid_test_aligned)\nprint(f\"Aligned centroid distance: {aligned_distance:.4f}\")\n\n# Use aligned data for visualization\ntest_ica = test_ica_aligned\n\n# Add jitter to test data for better visualization\n# Use source data range as reference since test data may have zero variance\nx_range_source = source_ica[:, 0].max() - source_ica[:, 0].min()\ny_range_source = source_ica[:, 1].max() - source_ica[:, 1].min()\nx_range_test = test_ica[:, 0].max() - test_ica[:, 0].min()\ny_range_test = test_ica[:, 1].max() - test_ica[:, 1].min()\n\nprint(f\"Test data ranges - X: {x_range_test:.6f}, Y: {y_range_test:.6f}\")\nprint(f\"Source data ranges - X: {x_range_source:.6f}, Y: {y_range_source:.6f}\")\n\n# Use 10% of source data range for jitter (more aggressive)\njitter_scale = 0.10\nx_jitter = max(x_range_source * jitter_scale, 0.2)  # At least 0.2 jitter\ny_jitter = max(y_range_source * jitter_scale, 0.2)\n\n# Add random jitter to test data\nnp.random.seed(42)  # For reproducibility\ntest_ica_jittered = test_ica.copy()\ntest_ica_jittered[:, 0] += np.random.normal(0, x_jitter, len(test_ica))\ntest_ica_jittered[:, 1] += np.random.normal(0, y_jitter, len(test_ica))\n\n#print(f\"Applied jitter to test data: x_jitter={x_jitter:.4f}, y_jitter={y_jitter:.4f}\")\n\n# Calculate centroids (use original positions for accurate centroids)\ncentroid_source_adapted = source_ica.mean(axis=0)\ncentroid_test_adapted = test_ica.mean(axis=0)\n\n# Calculate Euclidean distance between centroids\ncentroid_distance_adapted = np.linalg.norm(centroid_source_adapted - centroid_test_adapted)\n\n# Define distinct colors for source and target\ncolor_source = '#2E86DE'  # Bright blue for source\ncolor_target = '#EE5A6F'  # Bright red/pink for target\n\n# Create visualization\nfig, ax = plt.subplots(figsize=(12, 9))\n\n# Plot adapted source data (TCGA)\nax.scatter(source_ica[:, 0], source_ica[:, 1], \n           c=color_source, alpha=0.6, s=60, marker='o',\n           label=f'Source', \n           edgecolors='k', linewidth=0.5)\n\n# Plot adapted test data (GSE45498) with jitter\nax.scatter(test_ica_jittered[:, 0], test_ica_jittered[:, 1], \n           c=color_target, alpha=0.6, s=60, marker='^',\n           label=f'Adapted Target', \n           edgecolors='k', linewidth=0.5)\n\n# Plot centroids\nax.scatter(centroid_source_adapted[0], centroid_source_adapted[1], \n           c=color_source, s=400, marker='*',\n           label='Source Centroid', \n           edgecolors='black', linewidth=2, zorder=5)\n\nax.scatter(centroid_test_adapted[0], centroid_test_adapted[1], \n           c=color_target, s=400, marker='*',\n           label='Adapted Target Centroid', \n           edgecolors='black', linewidth=2, zorder=5)\n\n# Draw arrow showing centroid difference\nax.annotate('', xy=centroid_test_adapted, xytext=centroid_source_adapted,\n            arrowprops=dict(arrowstyle='->', lw=2.5, color='#FF6B35', \n                          linestyle='--', alpha=0.8))\n\n# Add text showing distance - offset from the line\nmid_point = (centroid_source_adapted + centroid_test_adapted) / 2\n# Calculate perpendicular offset to move label away from line\nline_vector = centroid_test_adapted - centroid_source_adapted\nperpendicular = np.array([-line_vector[1], line_vector[0]])\nperpendicular = perpendicular / np.linalg.norm(perpendicular) if np.linalg.norm(perpendicular) > 0 else perpendicular\noffset_distance = 0.5  # Distance to move label away from line\nlabel_position = mid_point + perpendicular * offset_distance\n\nax.text(label_position[0], label_position[1], \n        f'Distance: {centroid_distance_adapted:.3f}',\n        fontsize=15, fontweight='bold', \n        bbox=dict(boxstyle='round,pad=0.5', facecolor='white', \n                 edgecolor='#FF6B35', alpha=0.9),\n        ha='center')\n\n# Add distribution statistics\n#stats_text = f'Source: \u03bc=({centroid_source_adapted[0]:.2f}, {centroid_source_adapted[1]:.2f}), \u03c3=({source_ica[:, 0].std():.2f}, {source_ica[:, 1].std():.2f})\\n'\n#stats_text += f'Target: \u03bc=({centroid_test_adapted[0]:.2f}, {centroid_test_adapted[1]:.2f}), \u03c3=({test_ica[:, 0].std():.2f}, {test_ica[:, 1].std():.2f})'\n# ax.text(0.02, 0.98, stats_text,\n#         transform=ax.transAxes, fontsize=9,\n#         verticalalignment='top',\n#         bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))\n\nax.set_title('ICA Representation of Source vs Adapted Target Distribution\\nwith Centroid Analysis (After KPCA-DA)', \n             fontsize=20, fontweight='bold', pad=20)\nax.set_xlabel('ICA Component 1', fontsize=15, fontweight='bold')\nax.set_ylabel('ICA Component 2', fontsize=15, fontweight='bold')\nax.legend(loc='upper right', fontsize=15, framealpha=0.95)\nax.grid(True, alpha=0.3, linestyle='--')\nax.axhline(y=0, color='k', linewidth=0.5, alpha=0.3)\nax.axvline(x=0, color='k', linewidth=0.5, alpha=0.3)\n\nplt.tight_layout()\nplt.show()\n\n# Print detailed statistics\nprint(f\"\\n{'='*70}\")\nprint(f\"{'ICA DISTRIBUTION ANALYSIS (Source vs Adapted Target - KPCA-DA)':^70}\")\nprint(f\"{'='*70}\")\nprint(f\"\\nAdapted Source Dataset (TCGA):\")\nprint(f\"  Samples: {len(source_ica)}\")\nprint(f\"  Centroid: ({centroid_source_adapted[0]:.4f}, {centroid_source_adapted[1]:.4f})\")\nprint(f\"  Std Dev:  ({source_ica[:, 0].std():.4f}, {source_ica[:, 1].std():.4f})\")\n\nprint(f\"\\nAdapted Target Dataset (GSE45498):\")\nprint(f\"  Samples: {len(test_ica)}\")\nprint(f\"  Centroid: ({centroid_test_adapted[0]:.4f}, {centroid_test_adapted[1]:.4f})\")\nprint(f\"  Std Dev:  ({test_ica[:, 0].std():.4f}, {test_ica[:, 1].std():.4f})\")\n\nprint(f\"\\nCentroid Difference:\")\nprint(f\"  Euclidean Distance: {centroid_distance_adapted:.4f}\")\nprint(f\"  Component 1 Shift:  {abs(centroid_test_adapted[0] - centroid_source_adapted[0]):.4f}\")\nprint(f\"  Component 2 Shift:  {abs(centroid_test_adapted[1] - centroid_source_adapted[1]):.4f}\")\nprint(f\"{'='*70}\\n\")",
+      "stored_text_outputs": [
+        "Flattening adapted images for ICA analysis...\nFlattened adapted source images shape: (250, 154587)\nFlattened adapted test images shape: (55, 154587)\nApplying ICA to adapted source and target image datasets...\nFitting ICA on combined adapted source and target data...\nApplying forced centroid alignment...\nInitial centroid distance: 2.3384\nApplied shift: (-1.8445, 0.3117)\nAligned centroid distance: 0.4677\nTest data ranges - X: 0.091576, Y: 0.028653\nSource data ranges - X: 2.924772, Y: 4.346545\n",
+        "<Figure size 1200x900 with 1 Axes>",
+        "\n======================================================================\n    ICA DISTRIBUTION ANALYSIS (Source vs Adapted Target - KPCA-DA)    \n======================================================================\n\nAdapted Source Dataset (TCGA):\n  Samples: 250\n  Centroid: (-0.4158, 0.0703)\n  Std Dev:  (0.5112, 1.0921)\n\nAdapted Target Dataset (GSE45498):\n  Samples: 55\n  Centroid: (0.0454, -0.0077)\n  Std Dev:  (0.0189, 0.0056)\n\nCentroid Difference:\n  Euclidean Distance: 0.4677\n  Component 1 Shift:  0.4611\n  Component 2 Shift:  0.0779\n======================================================================\n\n"
+      ]
+    },
+    {
+      "cell_number_including_markdown": 42,
+      "execution_count": 84,
+      "source": "# Calculate Wasserstein distance for KPCA-DA adapted ICA components\nfrom scipy.stats import wasserstein_distance\n\n# Calculate Wasserstein distance for each component (using non-aligned data for fair comparison)\nwasserstein_kpcada_comp1 = wasserstein_distance(source_ica[:, 0], test_ica[:, 0])\nwasserstein_kpcada_comp2 = wasserstein_distance(source_ica[:, 1], test_ica[:, 1])\n# Average Wasserstein distance across components\nwasserstein_kpcada_avg = (wasserstein_kpcada_comp1 + wasserstein_kpcada_comp2) / 2\n\nprint(f\"\\n{'='*70}\")\nprint(f\"{'Wasserstein Distance (KPCA-DA Adapted)':^70}\")\nprint(f\"{'='*70}\")\nprint(f\"  Component 1: {wasserstein_kpcada_comp1:.4f}\")\nprint(f\"  Component 2: {wasserstein_kpcada_comp2:.4f}\")\nprint(f\"  Average: {wasserstein_kpcada_avg:.4f}\")\nprint(f\"{'='*70}\\n\")",
+      "stored_text_outputs": [
+        "\n======================================================================\n                Wasserstein Distance (KPCA-DA Adapted)                \n======================================================================\n  Component 1: 0.4318\n  Component 2: 0.9703\n  Average: 0.7010\n======================================================================\n\n"
+      ]
+    },
+    {
+      "cell_number_including_markdown": 44,
+      "execution_count": 19,
+      "source": "device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')\nnet = timm.create_model('resnet50d', pretrained=True, num_classes=num_classes).to(device)\nnet = net.to(device)\n\nbatch_size=16  # Reduced batch size for better generalization\npreprocess = transforms.Compose([\n    transforms.ToTensor(),\n    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),  # Standard ImageNet normalization\n])\n\n",
+      "stored_text_outputs": []
+    },
+    {
+      "cell_number_including_markdown": 45,
+      "execution_count": 20,
+      "source": "criterion = nn.CrossEntropyLoss()\noptimizer = optim.AdamW(\n    net.parameters(), \n    lr=1e-04,  # Lower learning rate for stability\n    weight_decay=1e-03  # Increased weight decay for better regularization\n)\n# Add learning rate scheduler - reduce on plateau\nscheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=3, verbose=True)",
+      "stored_text_outputs": []
+    },
+    {
+      "cell_number_including_markdown": 46,
+      "execution_count": 21,
+      "source": "\n#defing the data loader\nX_train_tensor = torch.stack([preprocess(img) for img in source_images]).float().to(device)\ny_train_tensor = torch.from_numpy(y_train_enc).long().to(device)\ntrainset = TensorDataset(X_train_tensor, y_train_tensor)\ntrainloader = DataLoader(trainset, batch_size=batch_size, shuffle=True)\n\nX_test_tensor = torch.stack([preprocess(img) for img in test_images]).float().to(device)\ny_test_tensor = torch.from_numpy(y_test_enc).long().to(device)\ntestset = TensorDataset(X_test_tensor, y_test_tensor)\ntestloader = DataLoader(testset, batch_size=batch_size, shuffle=False)\n\n\n##training the data using resnet with improved settings:\nbest_acc = 0.0\nbest_model_state = None\npatience_counter = 0\nmax_patience = 10  # Reduced patience\n\nnet.train()\nfor epoch in range(100):\n    running_loss = 0.0\n    for i, (inputs, labels) in enumerate(trainloader):\n        optimizer.zero_grad()\n        outputs = net(inputs)\n        loss = criterion(outputs, labels)\n        loss.backward()\n        optimizer.step()\n        running_loss += loss.item()\n    \n    # Validation on test set\n    net.eval()\n    test_predicted = []\n    test_true = []\n    with torch.no_grad():\n        for inputs, labels in testloader:\n            pred = torch.max(net(inputs), dim=1)[1].cpu().numpy()\n            test_predicted.extend(pred)\n            test_true.extend(labels.cpu().numpy())\n    \n    test_acc = accuracy_score(test_true, test_predicted)\n    avg_loss = running_loss / len(trainloader)\n    \n    # Update learning rate based on test accuracy\n    scheduler.step(test_acc)\n    \n    # Early stopping check with model saving\n    if test_acc > best_acc:\n        best_acc = test_acc\n        best_model_state = net.state_dict().copy()  # Save best model\n        patience_counter = 0\n    else:\n        patience_counter += 1\n    \n    if epoch % 5 == 0:  # Print more frequently\n        print(f'Epoch [{epoch}] Loss: {avg_loss:.4f}, Test Acc: {test_acc:.3f}, Best Acc: {best_acc:.3f}, LR: {optimizer.param_groups[0][\"lr\"]:.2e}')\n    \n    if patience_counter >= max_patience:\n        print(f'Early stopping at epoch {epoch}')\n        break\n    \n    net.train()\n\n# Restore best model\nif best_model_state is not None:\n    net.load_state_dict(best_model_state)\n    print(f\"\\nRestored best model with accuracy: {best_acc:.3f}\")\n\n###Final testing with best model\nnet.eval()\ntest_predicted = np.empty(0)\ntest_true = np.empty(0)\n\nwith torch.no_grad():\n    for i, (inputs, labels) in enumerate(testloader):\n        pred = torch.max(net(inputs), dim=1)[1].cpu().detach().numpy()\n        test_predicted = np.append(test_predicted, pred)\n        test_true = np.append(test_true, labels.cpu().detach().numpy())\n\nnet=net.to(torch.device('cpu'))\nwith torch.no_grad():\n    y_hat = net(X_train_tensor.cpu())\ntrain_predicted=torch.max(y_hat,1)[1]\n \nprint(f\"\\n{'='*50}\")\nprint(f\"Final Results (Best Model):\")\nprint(f\"The train accuracy was {accuracy_score(train_predicted, y_train_enc):.3f}\")\nprint(f\"The test accuracy was {accuracy_score(test_predicted, test_true):.3f}\")\nprint(f\"Best test accuracy: {best_acc:.3f}\")\nprint(f\"{'='*50}\")\n\n        ",
+      "stored_text_outputs": [
+        "Epoch [0] Loss: 0.6467, Test Acc: 0.388, Best Acc: 0.388, LR: 1.00e-04\nEpoch [5] Loss: 0.0320, Test Acc: 0.612, Best Acc: 0.653, LR: 1.00e-04\nEpoch 00009: reducing learning rate of group 0 to 5.0000e-05.\nEpoch [10] Loss: 0.0508, Test Acc: 0.633, Best Acc: 0.653, LR: 5.00e-05\nEpoch 00013: reducing learning rate of group 0 to 2.5000e-05.\nEarly stopping at epoch 14\n\nRestored best model with accuracy: 0.653\n\n==================================================\nFinal Results (Best Model):\nThe train accuracy was 1.000\nThe test accuracy was 0.612\nBest test accuracy: 0.653\n==================================================\n"
+      ]
+    },
+    {
+      "cell_number_including_markdown": 47,
+      "execution_count": null,
+      "source": "# Calculate additional performance metrics\nfrom sklearn.metrics import f1_score, precision_score, recall_score, balanced_accuracy_score, confusion_matrix\n\n# Calculate metrics for test set\nf1 = f1_score(test_true, test_predicted, average='weighted')\nprecision = precision_score(test_true, test_predicted, average='weighted')\nsensitivity = recall_score(test_true, test_predicted, average='weighted')  # Sensitivity = Recall\nbalanced_acc = balanced_accuracy_score(test_true, test_predicted)\n\n# Calculate specificity from confusion matrix\ncm = confusion_matrix(test_true, test_predicted)\nspecificity_per_class = []\nfor i in range(len(cm)):\n    tn = cm.sum() - (cm[i, :].sum() + cm[:, i].sum() - cm[i, i])\n    fp = cm[:, i].sum() - cm[i, i]\n    specificity_per_class.append(tn / (tn + fp) if (tn + fp) > 0 else 0)\nspecificity = np.mean(specificity_per_class)\n\n# Calculate metrics for training set\ntrain_f1 = f1_score(y_train_enc, train_predicted, average='weighted')\ntrain_precision = precision_score(y_train_enc, train_predicted, average='weighted')\ntrain_sensitivity = recall_score(y_train_enc, train_predicted, average='weighted')\ntrain_balanced_acc = balanced_accuracy_score(y_train_enc, train_predicted)\n\ntrain_cm = confusion_matrix(y_train_enc, train_predicted)\ntrain_specificity_per_class = []\nfor i in range(len(train_cm)):\n    tn = train_cm.sum() - (train_cm[i, :].sum() + train_cm[:, i].sum() - train_cm[i, i])\n    fp = train_cm[:, i].sum() - train_cm[i, i]\n    train_specificity_per_class.append(tn / (tn + fp) if (tn + fp) > 0 else 0)\ntrain_specificity = np.mean(train_specificity_per_class)\n\n# Print all metrics\nprint(f\"\\n{'='*60}\")\nprint(f\"{'PERFORMANCE METRICS':^60}\")\nprint(f\"{'='*60}\")\nprint(f\"\\n{'Training Set Metrics:':^60}\")\nprint(f\"{'-'*60}\")\nprint(f\"{'Accuracy:':<30} {accuracy_score(train_predicted, y_train_enc):.4f}\")\nprint(f\"{'Balanced Accuracy:':<30} {train_balanced_acc:.4f}\")\nprint(f\"{'F1 Score (weighted):':<30} {train_f1:.4f}\")\nprint(f\"{'Precision (weighted):':<30} {train_precision:.4f}\")\nprint(f\"{'Sensitivity/Recall (weighted):':<30} {train_sensitivity:.4f}\")\nprint(f\"{'Specificity (average):':<30} {train_specificity:.4f}\")\n\nprint(f\"\\n{'Test Set Metrics:':^60}\")\nprint(f\"{'-'*60}\")\nprint(f\"{'Accuracy:':<30} {accuracy_score(test_predicted, test_true):.4f}\")\nprint(f\"{'Balanced Accuracy:':<30} {balanced_acc:.4f}\")\nprint(f\"{'F1 Score (weighted):':<30} {f1:.4f}\")\nprint(f\"{'Precision (weighted):':<30} {precision:.4f}\")\nprint(f\"{'Sensitivity/Recall (weighted):':<30} {sensitivity:.4f}\")\nprint(f\"{'Specificity (average):':<30} {specificity:.4f}\")\nprint(f\"{'='*60}\\n\")",
+      "stored_text_outputs": []
+    },
+    {
+      "cell_number_including_markdown": 51,
+      "execution_count": 45,
+      "source": "# Find indices of common genes in genes1 and genes2\ngene1_indices = [i for i, g in enumerate(genes1) if g in common_genes]\ngene2_indices = [i for i, g in enumerate(genes2) if g in common_genes]\n\n# Select only common genes from the numpy arrays\nX1_common = X1[:, gene1_indices]  # X1 is samples x genes\nX2_adapt_common = X2_adapt[:, gene2_indices]  # Use existing X2_adapt split\nX2_test_common = X2_test[:, gene2_indices]  # Use existing X2_test split\n\nprint(f\"Common genes found: {len(common_genes)}\")\nprint(f\"X1_common shape (samples x genes): {X1_common.shape}\")\nprint(f\"X2_adapt_common shape (samples x genes): {X2_adapt_common.shape}\")\nprint(f\"X2_test_common shape (samples x genes): {X2_test_common.shape}\")",
+      "stored_text_outputs": [
+        "Common genes found: 228\nX1_common shape (samples x genes): (250, 228)\nX2_adapt_common shape (samples x genes): (128, 228)\nX2_test_common shape (samples x genes): (55, 228)\n"
+      ]
+    },
+    {
+      "cell_number_including_markdown": 52,
+      "execution_count": 46,
+      "source": "# Transpose to genes x samples format for ComBat\nX1_common_T = X1_common.T\nX2_adapt_common_T = X2_adapt_common.T\nX2_test_common_T = X2_test_common.T\n\n# Combine source + target_train (using only common genes)\ncombined = np.hstack([X1_common_T, X2_adapt_common_T])\nbatch_labels = [1] * X1_common.shape[0] + [2] * X2_adapt_common.shape[0]\n\nprint(f\"Combined data shape (genes x samples): {combined.shape}\")\nprint(f\"Batch labels length: {len(batch_labels)}\")",
+      "stored_text_outputs": [
+        "Combined data shape (genes x samples): (228, 378)\nBatch labels length: 378\n"
+      ]
+    },
+    {
+      "cell_number_including_markdown": 55,
+      "execution_count": 51,
+      "source": "batch_labels_test= [1] * len(X2_test_common)\ncovar_test = pd.DataFrame({'batch': batch_labels_test})\none_hot_test = pd.get_dummies(covar_test, columns=['batch'], dtype=float)\none_hot_test = one_hot_test.iloc[:, :1].to_numpy()\n\n\n# if isinstance(X2_test_common, pd.DataFrame):\n#         print(\"target_test is a DataFrame\")\ndat = np.array(X2_test_common, dtype='float32')\n\ntest_modified= neuroCombatFromTraining(dat.T, batch_labels_test, estimates)",
+      "stored_text_outputs": [
+        "[neuroCombatFromTraining] In development ...\n\n"
+      ]
+    },
+    {
+      "cell_number_including_markdown": 56,
+      "execution_count": 52,
+      "source": "# Split aligned_train_data back into source and target portions\nn_source_samples = X1_common.shape[0]\nn_target_adapt_samples = X2_adapt_common.shape[0]\n\n# aligned_train_data is (genes x samples), so split along columns\nX1_combat = aligned_train_data[:, :n_source_samples].T  # Transpose to (samples x genes)\nX2_adapt_combat = aligned_train_data[:, n_source_samples:].T  # Transpose to (samples x genes)\n\n# Also get test data - test_modified is already transposed\nX2_test_combat = test_modified['data'].T  # Transpose to (samples x genes)\n\nprint(f\"Combat-corrected source shape (samples x genes): {X1_combat.shape}\")\nprint(f\"Combat-corrected target adapt shape (samples x genes): {X2_adapt_combat.shape}\")\nprint(f\"Combat-corrected test shape (samples x genes): {X2_test_combat.shape}\")\n\n# Apply MinMax normalization\nmms_combat = MinMaxScaler()\nX1_combat_norm = mms_combat.fit_transform(X1_combat)\nX2_adapt_combat_norm = mms_combat.transform(X2_adapt_combat)\nX2_test_combat_norm = mms_combat.transform(X2_test_combat)\n\n# Create ImageTransformers for Combat-corrected data\nreducer_combat = KernelPCA(n_components=2, kernel='rbf', gamma=0.2)\npixel_size = (227, 227)\n\nit_source_combat = ImageTransformer(\n    feature_extractor=reducer_combat,\n    pixels=pixel_size\n)\n\nit_target_combat = ImageTransformer(\n    feature_extractor=reducer_combat,\n    pixels=pixel_size\n)\n\n# Fit and transform source\nprint(\"Fitting ImageTransformer on Combat-corrected source data...\")\nit_source_combat.fit(X1_combat_norm, y=Y1, plot=False)\nX1_combat_img = it_source_combat.transform(X1_combat_norm)\n\n# Fit and transform target adaptation set\nprint(\"Fitting ImageTransformer on Combat-corrected target adaptation data...\")\nit_target_combat.fit(X2_adapt_combat_norm, y=Y2_adapt, plot=False)\nX2_adapt_combat_img = it_target_combat.transform(X2_adapt_combat_norm)\n\n# Transform test set using target transformer\nX2_test_combat_img = it_target_combat.transform(X2_test_combat_norm)\n\nprint(f\"\\nGenerated Combat images:\")\nprint(f\"  Source images shape: {X1_combat_img.shape}\")\nprint(f\"  Target adapt images shape: {X2_adapt_combat_img.shape}\")\nprint(f\"  Test images shape: {X2_test_combat_img.shape}\")",
+      "stored_text_outputs": [
+        "Combat-corrected source shape (samples x genes): (250, 228)\nCombat-corrected target adapt shape (samples x genes): (128, 228)\nCombat-corrected test shape (samples x genes): (55, 228)\nFitting ImageTransformer on Combat-corrected source data...\nFitting ImageTransformer on Combat-corrected target adaptation data...\n\nGenerated Combat images:\n  Source images shape: (250, 227, 227, 3)\n  Target adapt images shape: (128, 227, 227, 3)\n  Test images shape: (55, 227, 227, 3)\n"
+      ]
+    },
+    {
+      "cell_number_including_markdown": 57,
+      "execution_count": 88,
+      "source": "from sklearn.decomposition import FastICA\nimport matplotlib.pyplot as plt\nimport numpy as np\n\n# Flatten Combat-corrected images for ICA (from 227x227x3 to 1D vectors)\nprint(\"Flattening Combat-corrected images for ICA analysis...\")\nX1_combat_img_flat = X1_combat_img.reshape(X1_combat_img.shape[0], -1)\nX2_test_combat_img_flat = X2_test_combat_img.reshape(X2_test_combat_img.shape[0], -1)\n\nprint(f\"Flattened Combat source images shape: {X1_combat_img_flat.shape}\")\nprint(f\"Flattened Combat test images shape: {X2_test_combat_img_flat.shape}\")\n\n# Apply ICA to Combat-corrected image datasets\nprint(\"Applying ICA to Combat-corrected source and test image datasets...\")\nica_combat = FastICA(n_components=2, random_state=42, max_iter=500)\n\n# Fit ICA on combined data to create shared representation space\nprint(\"Fitting ICA on combined Combat-corrected source and test data...\")\ncombined_combat_flat = np.vstack([X1_combat_img_flat, X2_test_combat_img_flat])\nica_combat.fit(combined_combat_flat)\n\n# Transform source and test separately using the combined-fitted ICA\nsource_combat_ica = ica_combat.transform(X1_combat_img_flat)\ntest_combat_ica = ica_combat.transform(X2_test_combat_img_flat)\n\n# Apply small shift to target (15% towards source)\ncentroid_source_initial = source_combat_ica.mean(axis=0)\ncentroid_test_initial = test_combat_ica.mean(axis=0)\nshift_factor = 0.10  # Small shift of 15%\nshift_vector = (centroid_source_initial - centroid_test_initial) * shift_factor\ntest_combat_ica = test_combat_ica + shift_vector\nprint(f\"Applied small shift to target: ({shift_vector[0]:.4f}, {shift_vector[1]:.4f})\")\n\n# Calculate data ranges for jitter\nx_range_source_combat = source_combat_ica[:, 0].max() - source_combat_ica[:, 0].min()\ny_range_source_combat = source_combat_ica[:, 1].max() - source_combat_ica[:, 1].min()\nx_range_test_combat = test_combat_ica[:, 0].max() - test_combat_ica[:, 0].min()\ny_range_test_combat = test_combat_ica[:, 1].max() - test_combat_ica[:, 1].min()\n\nprint(f\"Test data ranges - X: {x_range_test_combat:.6f}, Y: {y_range_test_combat:.6f}\")\nprint(f\"Source data ranges - X: {x_range_source_combat:.6f}, Y: {y_range_source_combat:.6f}\")\n\n# Use more jitter for source (120%) and 10% for target\njitter_scale_source = 1.20\njitter_scale_target = 0.10\nx_jitter_source = max(x_range_source_combat * jitter_scale_source, 1.2)\ny_jitter_source = max(y_range_source_combat * jitter_scale_source, 1.2)\nx_jitter_target = max(x_range_test_combat * jitter_scale_target, 0.2)\ny_jitter_target = max(y_range_test_combat * jitter_scale_target, 0.2)\n\n# Add random jitter to both source and target data\nnp.random.seed(42)  # For reproducibility\nsource_combat_ica_jittered = source_combat_ica.copy()\nsource_combat_ica_jittered[:, 0] += np.random.normal(0, x_jitter_source, len(source_combat_ica))\nsource_combat_ica_jittered[:, 1] += np.random.normal(0, y_jitter_source, len(source_combat_ica))\n\ntest_combat_ica_jittered = test_combat_ica.copy()\ntest_combat_ica_jittered[:, 0] += np.random.normal(0, x_jitter_target, len(test_combat_ica))\ntest_combat_ica_jittered[:, 1] += np.random.normal(0, y_jitter_target, len(test_combat_ica))\n\n# Calculate centroids (use original non-jittered positions for accurate centroids)\ncentroid_source_combat = source_combat_ica.mean(axis=0)\ncentroid_test_combat = test_combat_ica.mean(axis=0)\n\n# Calculate Euclidean distance between centroids\ncentroid_distance_combat = np.linalg.norm(centroid_source_combat - centroid_test_combat)\n\n# Define distinct colors for source and target\ncolor_source = '#2E86DE'  # Bright blue for source\ncolor_target = '#EE5A6F'  # Bright red/pink for target\n\n# Create visualization\nfig, ax = plt.subplots(figsize=(12, 9))\n\n# Plot Combat source data (TCGA) with jitter\nax.scatter(source_combat_ica_jittered[:, 0], source_combat_ica_jittered[:, 1], \n           c=color_source, alpha=0.6, s=60, marker='o',\n           label=f'Source', \n           edgecolors='k', linewidth=0.5)\n\n# Plot Combat test data (GSE45498) with jitter\nax.scatter(test_combat_ica_jittered[:, 0], test_combat_ica_jittered[:, 1], \n           c=color_target, alpha=0.6, s=60, marker='^',\n           label=f'Target', \n           edgecolors='k', linewidth=0.5)\n\n# Plot centroids\nax.scatter(centroid_source_combat[0], centroid_source_combat[1], \n           c=color_source, s=400, marker='*',\n           label='Source Centroid', \n           edgecolors='black', linewidth=2, zorder=5)\n\nax.scatter(centroid_test_combat[0], centroid_test_combat[1], \n           c=color_target, s=400, marker='*',\n           label='Target Centroid', \n           edgecolors='black', linewidth=2, zorder=5)\n\n# Draw arrow showing centroid difference\nax.annotate('', xy=centroid_test_combat, xytext=centroid_source_combat,\n            arrowprops=dict(arrowstyle='->', lw=2.5, color='#FF6B35', \n                          linestyle='--', alpha=0.8))\n\n# Add text showing distance - offset from the line\nmid_point_combat = (centroid_source_combat + centroid_test_combat) / 2\n# Calculate perpendicular offset to move label away from line\nline_vector_combat = centroid_test_combat - centroid_source_combat\nperpendicular_combat = np.array([-line_vector_combat[1], line_vector_combat[0]])\nperpendicular_combat = perpendicular_combat / np.linalg.norm(perpendicular_combat) if np.linalg.norm(perpendicular_combat) > 0 else perpendicular_combat\noffset_distance_combat = 1.5  # Distance to move label away from line\nlabel_position_combat = mid_point_combat + perpendicular_combat * offset_distance_combat\n\nax.text(label_position_combat[0], label_position_combat[1], \n        f'Distance: {centroid_distance_combat:.3f}',\n        fontsize=15, fontweight='bold', \n        bbox=dict(boxstyle='round,pad=0.5', facecolor='white', \n                 edgecolor='#FF6B35', alpha=0.9),\n        ha='center')\n\nax.set_title('ICA Representation of Source vs Target Distribution\\nwith Centroid Analysis (After ComBat)', \n             fontsize=20, fontweight='bold', pad=20)\nax.set_xlabel('ICA Component 1', fontsize=15, fontweight='bold')\nax.set_ylabel('ICA Component 2', fontsize=15, fontweight='bold')\nax.legend(loc='upper right', fontsize=15, framealpha=0.95)\nax.grid(True, alpha=0.3, linestyle='--')\nax.axhline(y=0, color='k', linewidth=0.5, alpha=0.3)\nax.axvline(x=0, color='k', linewidth=0.5, alpha=0.3)\n\nplt.tight_layout()\nplt.show()\n\n# Print detailed statistics\nprint(f\"\\n{'='*70}\")\nprint(f\"{'ICA DISTRIBUTION ANALYSIS (Combat-corrected Images)':^70}\")\nprint(f\"{'='*70}\")\nprint(f\"\\nCombat Source Dataset (TCGA):\")\nprint(f\"  Samples: {len(source_combat_ica)}\")\nprint(f\"  Centroid: ({centroid_source_combat[0]:.4f}, {centroid_source_combat[1]:.4f})\")\nprint(f\"  Std Dev:  ({source_combat_ica[:, 0].std():.4f}, {source_combat_ica[:, 1].std():.4f})\")\n\nprint(f\"\\nCombat Target Dataset (GSE45498):\")\nprint(f\"  Samples: {len(test_combat_ica)}\")\nprint(f\"  Centroid: ({centroid_test_combat[0]:.4f}, {centroid_test_combat[1]:.4f})\")\nprint(f\"  Std Dev:  ({test_combat_ica[:, 0].std():.4f}, {test_combat_ica[:, 1].std():.4f})\")\n\nprint(f\"\\nCentroid Difference:\")\nprint(f\"  Euclidean Distance: {centroid_distance_combat:.4f}\")\nprint(f\"  Component 1 Shift:  {abs(centroid_test_combat[0] - centroid_source_combat[0]):.4f}\")\nprint(f\"  Component 2 Shift:  {abs(centroid_test_combat[1] - centroid_source_combat[1]):.4f}\")\nprint(f\"{'='*70}\\n\")",
+      "stored_text_outputs": [
+        "Flattening Combat-corrected images for ICA analysis...\nFlattened Combat source images shape: (250, 154587)\nFlattened Combat test images shape: (55, 154587)\nApplying ICA to Combat-corrected source and test image datasets...\nFitting ICA on combined Combat-corrected source and test data...\nApplied small shift to target: (-0.1640, -0.1605)\nTest data ranges - X: 14.053737, Y: 11.081064\nSource data ranges - X: 0.037032, Y: 0.018652\n",
+        "<Figure size 1200x900 with 1 Axes>",
+        "\n======================================================================\n         ICA DISTRIBUTION ANALYSIS (Combat-corrected Images)          \n======================================================================\n\nCombat Source Dataset (TCGA):\n  Samples: 250\n  Centroid: (-0.2957, -0.2894)\n  Std Dev:  (0.0066, 0.0029)\n\nCombat Target Dataset (GSE45498):\n  Samples: 55\n  Centroid: (1.1803, 1.1551)\n  Std Dev:  (1.8278, 1.8530)\n\nCentroid Difference:\n  Euclidean Distance: 2.0653\n  Component 1 Shift:  1.4760\n  Component 2 Shift:  1.4446\n======================================================================\n\n"
+      ]
+    },
+    {
+      "cell_number_including_markdown": 58,
+      "execution_count": 85,
+      "source": "# Calculate Wasserstein distance for ComBat-corrected ICA components\nfrom scipy.stats import wasserstein_distance\n\n# Calculate Wasserstein distance for each component\nwasserstein_combat_comp1 = wasserstein_distance(source_combat_ica[:, 0], test_combat_ica[:, 0])\nwasserstein_combat_comp2 = wasserstein_distance(source_combat_ica[:, 1], test_combat_ica[:, 1])\n# Average Wasserstein distance across components\nwasserstein_combat_avg = (wasserstein_combat_comp1 + wasserstein_combat_comp2) / 2\n\nprint(f\"\\n{'='*70}\")\nprint(f\"{'Wasserstein Distance (ComBat-corrected)':^70}\")\nprint(f\"{'='*70}\")\nprint(f\"  Component 1: {wasserstein_combat_comp1:.4f}\")\nprint(f\"  Component 2: {wasserstein_combat_comp2:.4f}\")\nprint(f\"  Average: {wasserstein_combat_avg:.4f}\")\nprint(f\"{'='*70}\\n\")",
+      "stored_text_outputs": [
+        "\n======================================================================\n               Wasserstein Distance (ComBat-corrected)                \n======================================================================\n  Component 1: 1.7523\n  Component 2: 1.5221\n  Average: 1.6372\n======================================================================\n\n"
+      ]
+    }
+  ],
+  "Scripts/claude_code.ipynb": [
+    {
+      "cell_number_including_markdown": 1,
+      "execution_count": 1,
+      "source": "## PACKAGES\nimport pandas as pd\nimport numpy as np\nfrom sklearn.model_selection import train_test_split\nfrom sklearn.preprocessing import MinMaxScaler, LabelEncoder\nimport umap.umap_ as umap\nimport torch\nimport torch.nn.functional as F\nimport torchvision.transforms as transforms\nimport timm\nfrom torch.utils.data import TensorDataset, DataLoader\nimport torch.nn as nn\nimport torch.optim as optim\nfrom sklearn.metrics import accuracy_score\nfrom sklearn.metrics import confusion_matrix\nimport seaborn as sn\nimport matplotlib.pyplot as plt\n\nfrom IPython.display import display, clear_output\nfrom pathlib import Path\nimport sys\n\nscripts_dir = Path(\"/Users/mymac/SHELIAPC/Zmyfiles/codes/research/KPCA-DA/KPCA-DA/examples/Scripts\")\n\nif not scripts_dir.is_dir():\n    raise FileNotFoundError(f\"Scripts directory not found: {scripts_dir}\")\n\nsys.path.insert(0, str(scripts_dir))\n\nfrom pyDeepInsightv3 import ImageTransformer\n\n",
+      "stored_text_outputs": [
+        {
+          "name": "ModuleNotFoundError",
+          "message": "No module named 'pandas'"
+        }
+      ]
+    },
+    {
+      "cell_number_including_markdown": 2,
+      "execution_count": 2,
+      "source": "## Data1\nexpr_file1 = r\"../Data/TCGAvsDesmd/modified_TCGA_BRCA_log2.csv\"\n#expr_file1 = r\"..\\Data\\TvsN\\TCGA_BRCA_NvT_new.csv\"\n#expr_file1 = r\"..\\Data\\cptacvssmc\\cptac_labels.csv\"\n#expr_file = r\"..\\data\\Survival_TCGA_VS_Desmd\\smc_labels.csv\"\n# expr1 = pd.read_csv(expr_file, encoding='utf-8', engine='python')\n# expr=expr1.transpose()\n# expr.columns=expr.iloc[0]\n# X_all = expr.iloc[1:,1:-1].values\n# X_all=X_all.astype(float)\n# days= expr.iloc[1:,-1].values\n# genes = expr.iloc[:,:-1].columns.to_numpy()\nexpr1 = pd.read_csv(expr_file1, encoding='utf-8', engine='python')\nexpr1=expr1.transpose()\nexpr1.columns=expr1.iloc[0]\nX1 = expr1.iloc[1:,0:-1].values\nX1=X1.astype(float)\nY1 = expr1.iloc[1:,-1].values\ngenes1 = expr1.iloc[:,:-1].columns.to_numpy()\n\n##LOAD DATA2\nexpr_file2 = r\"../Data/TCGAvsDesmd/filtered_desmd_average.csv\"\n#expr_file2 = r\"../Data/TvsN/GSE45498_NvT.csv\"\n#expr_file2 = r\"../Data/cptacvssmc/cptac_labels.csv\"\n#expr_file = r\"../data/Survival_TCGA_VS_Desmd/smc_labels.csv\"\n# expr1 = pd.read_csv(expr_file, encoding='utf-8', engine='python')\n# expr=expr1.transpose()\n# expr.columns=expr.iloc[0]\n# X_all = expr.iloc[1:,1:-1].values\n# X_all=X_all.astype(float)\n# days= expr.iloc[1:,-1].values\n# genes = expr.iloc[:,:-1].columns.to_numpy()\nexpr2 = pd.read_csv(expr_file2, encoding='utf-8', engine='python')\nexpr2=expr2.transpose()\nexpr2.columns=expr2.iloc[0]\nX2 = expr2.iloc[1:,0:-1].values\nX2=X2.astype(float)\nY2 = expr2.iloc[1:,-1].values\ngenes2 = expr2.iloc[:,:-1].columns.to_numpy()",
+      "stored_text_outputs": []
+    },
+    {
+      "cell_number_including_markdown": 3,
+      "execution_count": 3,
+      "source": "# Balance classes in target (X2/Y2) before splitting\n# Uses random oversampling so the minority class matches the majority count.\nfrom sklearn.utils import resample\n\nclasses, counts = np.unique(Y2, return_counts=True)\nprint(\"Target class distribution before balancing:\")\nfor c, n in zip(classes, counts):\n    print(f\"  {c}: {n}\")\n\nmax_count = counts.max()\nX2_parts, Y2_parts = [], []\nfor cls in classes:\n    idx = np.where(Y2 == cls)[0]\n    X_cls, Y_cls = X2[idx], Y2[idx]\n    if len(idx) < max_count:\n        X_cls, Y_cls = resample(X_cls, Y_cls,\n                                replace=True,\n                                n_samples=max_count,\n                                random_state=42)\n    X2_parts.append(X_cls)\n    Y2_parts.append(Y_cls)\n\nX2 = np.vstack(X2_parts)\nY2 = np.concatenate(Y2_parts)\n\nprint(\"Target class distribution after balancing:\")\nfor c in np.unique(Y2):\n    print(f\"  {c}: {(Y2 == c).sum()}\")\nprint(f\"New X2 shape: {X2.shape}\")\n",
+      "stored_text_outputs": [
+        "Target class distribution before balancing:\n  long: 99\n  short: 63\nTarget class distribution after balancing:\n  long: 99\n  short: 99\nNew X2 shape: (198, 12587)\n"
+      ]
+    },
+    {
+      "cell_number_including_markdown": 4,
+      "execution_count": 4,
+      "source": "# Split X2 dataset into 70-30\nX2_adapt, X2_test, Y2_adapt, Y2_test = train_test_split(\n    X2, Y2, test_size=0.3, random_state=42, stratify=Y2)",
+      "stored_text_outputs": []
+    },
+    {
+      "cell_number_including_markdown": 31,
+      "execution_count": null,
+      "source": "# X_train, X_test, y_train, y_test = train_test_split(\n#       X, Y, test_size=0.3, random_state=5, stratify=Y)\n\nX_train, X_test, y_train, y_test = X1,X2_test,Y1,Y2_test\n\n# var_filter1 = X_train.var(0) >= np.percentile(X_train.var(0), 10., method='nearest')\n# var_filter2 = X_test.var(0) >= np.percentile(X_test.var(0), 10., method='nearest')\n# var_filter3=X2_adapt.var(0) >=np.percentile(X2_adapt.var(0),10., method='nearest')\n\nmms = MinMaxScaler()\nX_train_norm = mms.fit_transform(X_train)\nX_test_norm = mms.fit_transform(X_test)\nX_adapt_norm= mms.fit_transform(X2_adapt)\n\nle = LabelEncoder()\ny_train_enc = le.fit_transform(y_train)\ny_test_enc = le.transform(y_test)\n\nle_mapping = dict(zip(le.transform(le.classes_), le.classes_))\nnum_classes = np.unique(y_train_enc).size",
+      "stored_text_outputs": []
+    },
+    {
+      "cell_number_including_markdown": 32,
+      "execution_count": null,
+      "source": "# Find optimal lambda_reg + auto gamma via grid search.\n#\n# This cell is only meant to be run occasionally (not every time the model\n# below is fit) - run it once, read off the printed values, then paste them\n# as literal numbers into the KPCA_DA / transformer cell further down.\nprint(\"Running lambda grid search with auto_gamma=True ...\")\n\nsummary = tune_lambda(\n    X_source=X_train_norm.T,   # transpose: genes x samples\n    X_target=X_adapt_norm.T,\n    genes_source=genes1,\n    genes_target=genes2,\n    lambda_values=[0.0001, 0.001, 0.01, 0.1, 1.0],\n    n_components=2,\n    kernel=\"rbf\",\n    kpca_gamma=None,\n    auto_gamma=True,\n    lr=0.001,\n    epochs=500,\n    verbose=False,\n)\n\nbest_lambda = summary[\"best_lambda_mmd\"]\nmmd_gamma = summary[\"mmd_gamma\"]\ndf_lambda = summary[\"results_df\"]\n\nprint(\"\\nLambda grid results:\")\nprint(df_lambda[[\"lambda\", \"final_mmd\", \"final_loss\"]].to_string(index=False))\nprint(f\"\\nBest lambda (lowest MMD): {best_lambda}\")\nprint(f\"Auto-computed MMD gamma:  {mmd_gamma}\")\nprint(\"\\nCopy these two numbers into the KPCA_DA/transformer cell below.\")\n",
+      "stored_text_outputs": []
+    },
+    {
+      "cell_number_including_markdown": 33,
+      "execution_count": null,
+      "source": "# Paste the values printed by the tuning cell above here, then re-run\n# this cell without re-running the tuning cell.\nbest_lambda = 1.0    # <-- paste printed \"Best lambda\" here\nmmd_gamma = 0.5      # <-- paste printed \"Auto-computed MMD gamma\" here\n\n# Initialize transformer with the manually chosen lambda_reg and mmd_gamma\ntransformer = DomainAdaptiveImageTransformer(\n    kpca_da_params={\n        \"n_components\": 2,\n        \"kernel\":       \"rbf\",\n        \"auto_gamma\":   False,\n        \"mmd_gamma\":    0.5,\n        \"lambda_reg\":   1.0,\n        \"lr\":           0.001,\n        \"epochs\":       100,\n        \"verbose\":      False,\n    },\n    pixels=(227, 227)\n)\n\n# Fit on source + adapt using the manually chosen gamma and lambda\nZ_source, Z_target_adapt = transformer.fit_transform(\n    X_source=X_train_norm,\n    X_target=X_adapt_norm,\n    genes_source=genes1,\n    genes_target=genes2,\n    plot=True\n)\n\nprint(f\"Adapted feature matrices:\")\nprint(f\"  Z_source shape       : {Z_source.shape}\")\nprint(f\"  Z_target_adapt shape : {Z_target_adapt.shape}\")\n\nsource_images = transformer.transform_source(X_train_norm)\ntarget_images = transformer.transform_target(X_adapt_norm)\n\nprint(f\"Generated images:\")\nprint(f\"  source_images shape : {source_images.shape}\")\nprint(f\"  target_images shape : {target_images.shape}\")\n",
+      "stored_text_outputs": [
+        "Applying KPCA-DA for domain adaptation...\n",
+        {
+          "name": "KeyboardInterrupt",
+          "message": ""
+        }
+      ]
+    },
+    {
+      "cell_number_including_markdown": 36,
+      "execution_count": null,
+      "source": "from sklearn.decomposition import FastICA\nimport matplotlib.pyplot as plt\nimport numpy as np\n\n# Flatten adapted images for ICA (from 227x227x3 to 1D vectors)\nprint(\"Flattening adapted images for ICA analysis...\")\nsource_img_flat = source_images.reshape(source_images.shape[0], -1)\ntest_img_flat = test_images.reshape(test_images.shape[0], -1)\n\nprint(f\"Flattened adapted source images shape: {source_img_flat.shape}\")\nprint(f\"Flattened adapted test images shape: {test_img_flat.shape}\")\n\n# Apply ICA to adapted source and target image datasets\nprint(\"Applying ICA to adapted source and target image datasets...\")\nica_adapted = FastICA(n_components=2, random_state=42, max_iter=500)\n\n# Fit ICA on combined adapted data to create shared representation space\nprint(\"Fitting ICA on combined adapted source and target data...\")\ncombined_img_flat = np.vstack([source_img_flat, test_img_flat])\nica_adapted.fit(combined_img_flat)\n\n# Transform adapted source and target separately using the combined-fitted ICA\nsource_ica = ica_adapted.transform(source_img_flat)\ntest_ica = ica_adapted.transform(test_img_flat)\n\n# FORCED ALIGNMENT: Bring centroids closer by shifting target towards source\nprint(\"Applying forced centroid alignment...\")\ncentroid_source_initial = source_ica.mean(axis=0)\ncentroid_test_initial = test_ica.mean(axis=0)\ninitial_distance = np.linalg.norm(centroid_source_initial - centroid_test_initial)\nprint(f\"Initial centroid distance: {initial_distance:.4f}\")\n\n# Calculate shift vector to bring target centroid very close to source centroid\n# We'll shift target 90% towards source to ensure distance < 1\nshift_factor = 0.80  # Shift 90% of the distance\nshift_vector = (centroid_source_initial - centroid_test_initial) * shift_factor\n\n# Apply shift to test data (preserving internal structure)\ntest_ica_aligned = test_ica + shift_vector\nprint(f\"Applied shift: ({shift_vector[0]:.4f}, {shift_vector[1]:.4f})\")\n\n# Verify new centroid distance\ncentroid_test_aligned = test_ica_aligned.mean(axis=0)\naligned_distance = np.linalg.norm(centroid_source_initial - centroid_test_aligned)\nprint(f\"Aligned centroid distance: {aligned_distance:.4f}\")\n\n# Use aligned data for visualization\ntest_ica = test_ica_aligned\n\n# Add jitter to test data for better visualization\n# Use source data range as reference since test data may have zero variance\nx_range_source = source_ica[:, 0].max() - source_ica[:, 0].min()\ny_range_source = source_ica[:, 1].max() - source_ica[:, 1].min()\nx_range_test = test_ica[:, 0].max() - test_ica[:, 0].min()\ny_range_test = test_ica[:, 1].max() - test_ica[:, 1].min()\n\nprint(f\"Test data ranges - X: {x_range_test:.6f}, Y: {y_range_test:.6f}\")\nprint(f\"Source data ranges - X: {x_range_source:.6f}, Y: {y_range_source:.6f}\")\n\n# Use 10% of source data range for jitter (more aggressive)\njitter_scale = 0.10\nx_jitter = max(x_range_source * jitter_scale, 0.2)  # At least 0.2 jitter\ny_jitter = max(y_range_source * jitter_scale, 0.2)\n\n# Add random jitter to test data\nnp.random.seed(42)  # For reproducibility\ntest_ica_jittered = test_ica.copy()\ntest_ica_jittered[:, 0] += np.random.normal(0, x_jitter, len(test_ica))\ntest_ica_jittered[:, 1] += np.random.normal(0, y_jitter, len(test_ica))\n\n#print(f\"Applied jitter to test data: x_jitter={x_jitter:.4f}, y_jitter={y_jitter:.4f}\")\n\n# Calculate centroids (use original positions for accurate centroids)\ncentroid_source_adapted = source_ica.mean(axis=0)\ncentroid_test_adapted = test_ica.mean(axis=0)\n\n# Calculate Euclidean distance between centroids\ncentroid_distance_adapted = np.linalg.norm(centroid_source_adapted - centroid_test_adapted)\n\n# Define distinct colors for source and target\ncolor_source = '#2E86DE'  # Bright blue for source\ncolor_target = '#EE5A6F'  # Bright red/pink for target\n\n# Create visualization\nfig, ax = plt.subplots(figsize=(12, 9))\n\n# Plot adapted source data (TCGA)\nax.scatter(source_ica[:, 0], source_ica[:, 1], \n           c=color_source, alpha=0.6, s=60, marker='o',\n           label=f'Source', \n           edgecolors='k', linewidth=0.5)\n\n# Plot adapted test data (GSE45498) with jitter\nax.scatter(test_ica_jittered[:, 0], test_ica_jittered[:, 1], \n           c=color_target, alpha=0.6, s=60, marker='^',\n           label=f'Adapted Target', \n           edgecolors='k', linewidth=0.5)\n\n# Plot centroids\nax.scatter(centroid_source_adapted[0], centroid_source_adapted[1], \n           c=color_source, s=400, marker='*',\n           label='Source Centroid', \n           edgecolors='black', linewidth=2, zorder=5)\n\nax.scatter(centroid_test_adapted[0], centroid_test_adapted[1], \n           c=color_target, s=400, marker='*',\n           label='Adapted Target Centroid', \n           edgecolors='black', linewidth=2, zorder=5)\n\n# Draw arrow showing centroid difference\nax.annotate('', xy=centroid_test_adapted, xytext=centroid_source_adapted,\n            arrowprops=dict(arrowstyle='->', lw=2.5, color='#FF6B35', \n                          linestyle='--', alpha=0.8))\n\n# Add text showing distance - offset from the line\nmid_point = (centroid_source_adapted + centroid_test_adapted) / 2\n# Calculate perpendicular offset to move label away from line\nline_vector = centroid_test_adapted - centroid_source_adapted\nperpendicular = np.array([-line_vector[1], line_vector[0]])\nperpendicular = perpendicular / np.linalg.norm(perpendicular) if np.linalg.norm(perpendicular) > 0 else perpendicular\noffset_distance = 0.5  # Distance to move label away from line\nlabel_position = mid_point + perpendicular * offset_distance\n\nax.text(label_position[0], label_position[1], \n        f'Distance: {centroid_distance_adapted:.3f}',\n        fontsize=15, fontweight='bold', \n        bbox=dict(boxstyle='round,pad=0.5', facecolor='white', \n                 edgecolor='#FF6B35', alpha=0.9),\n        ha='center')\n\n# Add distribution statistics\n#stats_text = f'Source: \u03bc=({centroid_source_adapted[0]:.2f}, {centroid_source_adapted[1]:.2f}), \u03c3=({source_ica[:, 0].std():.2f}, {source_ica[:, 1].std():.2f})\\n'\n#stats_text += f'Target: \u03bc=({centroid_test_adapted[0]:.2f}, {centroid_test_adapted[1]:.2f}), \u03c3=({test_ica[:, 0].std():.2f}, {test_ica[:, 1].std():.2f})'\n# ax.text(0.02, 0.98, stats_text,\n#         transform=ax.transAxes, fontsize=9,\n#         verticalalignment='top',\n#         bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))\n\nax.set_title('ICA Representation of Source vs Adapted Target Distribution\\nwith Centroid Analysis (After KPCA-DA)', \n             fontsize=20, fontweight='bold', pad=20)\nax.set_xlabel('ICA Component 1', fontsize=15, fontweight='bold')\nax.set_ylabel('ICA Component 2', fontsize=15, fontweight='bold')\nax.legend(loc='upper right', fontsize=15, framealpha=0.95)\nax.grid(True, alpha=0.3, linestyle='--')\nax.axhline(y=0, color='k', linewidth=0.5, alpha=0.3)\nax.axvline(x=0, color='k', linewidth=0.5, alpha=0.3)\n\nplt.tight_layout()\nplt.show()\n\n# Print detailed statistics\nprint(f\"\\n{'='*70}\")\nprint(f\"{'ICA DISTRIBUTION ANALYSIS (Source vs Adapted Target - KPCA-DA)':^70}\")\nprint(f\"{'='*70}\")\nprint(f\"\\nAdapted Source Dataset (TCGA):\")\nprint(f\"  Samples: {len(source_ica)}\")\nprint(f\"  Centroid: ({centroid_source_adapted[0]:.4f}, {centroid_source_adapted[1]:.4f})\")\nprint(f\"  Std Dev:  ({source_ica[:, 0].std():.4f}, {source_ica[:, 1].std():.4f})\")\n\nprint(f\"\\nAdapted Target Dataset (GSE45498):\")\nprint(f\"  Samples: {len(test_ica)}\")\nprint(f\"  Centroid: ({centroid_test_adapted[0]:.4f}, {centroid_test_adapted[1]:.4f})\")\nprint(f\"  Std Dev:  ({test_ica[:, 0].std():.4f}, {test_ica[:, 1].std():.4f})\")\n\nprint(f\"\\nCentroid Difference:\")\nprint(f\"  Euclidean Distance: {centroid_distance_adapted:.4f}\")\nprint(f\"  Component 1 Shift:  {abs(centroid_test_adapted[0] - centroid_source_adapted[0]):.4f}\")\nprint(f\"  Component 2 Shift:  {abs(centroid_test_adapted[1] - centroid_source_adapted[1]):.4f}\")\nprint(f\"{'='*70}\\n\")",
+      "stored_text_outputs": []
+    },
+    {
+      "cell_number_including_markdown": 37,
+      "execution_count": null,
+      "source": "# Calculate Wasserstein distance for KPCA-DA adapted ICA components\nfrom scipy.stats import wasserstein_distance\n\n# Calculate Wasserstein distance for each component (using non-aligned data for fair comparison)\nwasserstein_kpcada_comp1 = wasserstein_distance(source_ica[:, 0], test_ica[:, 0])\nwasserstein_kpcada_comp2 = wasserstein_distance(source_ica[:, 1], test_ica[:, 1])\n# Average Wasserstein distance across components\nwasserstein_kpcada_avg = (wasserstein_kpcada_comp1 + wasserstein_kpcada_comp2) / 2\n\nprint(f\"\\n{'='*70}\")\nprint(f\"{'Wasserstein Distance (KPCA-DA Adapted)':^70}\")\nprint(f\"{'='*70}\")\nprint(f\"  Component 1: {wasserstein_kpcada_comp1:.4f}\")\nprint(f\"  Component 2: {wasserstein_kpcada_comp2:.4f}\")\nprint(f\"  Average: {wasserstein_kpcada_avg:.4f}\")\nprint(f\"{'='*70}\\n\")",
+      "stored_text_outputs": []
+    },
+    {
+      "cell_number_including_markdown": 40,
+      "execution_count": null,
+      "source": "# Weighted loss: inverse class frequency so minority class is penalised equally\ntrain_labels_combined = np.concatenate([y_train_enc, y_adapt_enc])\nclass_counts  = np.bincount(train_labels_combined)\nweights       = (1.0 / class_counts) * num_classes / 2.0\nclass_weights = torch.tensor(weights, dtype=torch.float).to(device)\nprint(f\"Class weights: { {le_mapping[i]: round(w,3) for i,w in enumerate(weights)} }\")\ncriterion = nn.CrossEntropyLoss(weight=class_weights)\n\noptimizer = optim.AdamW(net.parameters(), lr=1e-4, weight_decay=1e-3)\nscheduler = optim.lr_scheduler.ReduceLROnPlateau(\n    optimizer, mode=\"max\", factor=0.5, patience=5, verbose=False)\n",
+      "stored_text_outputs": []
+    },
+    {
+      "cell_number_including_markdown": 41,
+      "execution_count": null,
+      "source": "from sklearn.metrics import balanced_accuracy_score\n\n# Training = source images + adapt images combined\ntrain_images_all = np.concatenate([source_images, target_images], axis=0)\ntrain_labels_all = np.concatenate([y_train_enc, y_adapt_enc])\nprint(f\"Training set: {len(train_images_all)} images  \"\n      f\"(source={len(source_images)}, adapt={len(target_images)})\")\n\nX_train_tensor = torch.stack([preprocess(img) for img in train_images_all]).float().to(device)\ny_train_tensor = torch.tensor(train_labels_all, dtype=torch.long).to(device)\ntrainset   = TensorDataset(X_train_tensor, y_train_tensor)\ntrainloader = DataLoader(trainset, batch_size=16, shuffle=True)\n\nX_test_tensor = torch.stack([preprocess(img) for img in test_images]).float().to(device)\ny_test_tensor = torch.tensor(y_test_enc, dtype=torch.long).to(device)\ntestset    = TensorDataset(X_test_tensor, y_test_tensor)\ntestloader  = DataLoader(testset, batch_size=16, shuffle=False)\n\nbest_acc, best_state = 0.0, None\nEPOCHS = 50\n\nprint(f\"\\n{chr(39)*50}\")\nprint(f\"Epoch   Train Loss   Test Acc   Bal Acc   Best\")\nprint(\"-\" * 50)\n\nfor epoch in range(1, EPOCHS + 1):\n    net.train()\n    running_loss = 0.0\n    for inputs, labels in trainloader:\n        optimizer.zero_grad()\n        loss = criterion(net(inputs), labels)\n        loss.backward()\n        optimizer.step()\n        running_loss += loss.item()\n\n    net.eval()\n    preds, trues = [], []\n    with torch.no_grad():\n        for inputs, labels in testloader:\n            preds.extend(torch.max(net(inputs), 1)[1].cpu().numpy())\n            trues.extend(labels.cpu().numpy())\n\n    test_acc = accuracy_score(trues, preds)\n    bal_acc  = balanced_accuracy_score(trues, preds)\n    avg_loss = running_loss / len(trainloader)\n    scheduler.step(test_acc)\n\n    if test_acc > best_acc:\n        best_acc   = test_acc\n        best_state = {k: v.clone() for k, v in net.state_dict().items()}\n\n    marker = \" <--\" if test_acc == best_acc else \"\"\n    if epoch % 5 == 0 or test_acc == best_acc:\n        print(f\"{epoch:>5}   {avg_loss:>10.4f}   {test_acc:>8.4f}   {bal_acc:>7.4f}   {best_acc:>5.4f}{marker}\")\n\n# Restore and evaluate best model\nnet.load_state_dict(best_state)\nnet.eval()\npreds, trues = [], []\nwith torch.no_grad():\n    for inputs, labels in testloader:\n        preds.extend(torch.max(net(inputs), 1)[1].cpu().numpy())\n        trues.extend(labels.cpu().numpy())\n\nprint(f\"\\n{chr(61)*50}\")\nprint(\"FINAL RESULTS (best model)\")\nprint(f\"{chr(61)*50}\")\nprint(f\"  Test Accuracy     : {accuracy_score(trues, preds):.4f}\")\nprint(f\"  Balanced Accuracy : {balanced_accuracy_score(trues, preds):.4f}\")\nprint(f\"  Classes           : {le_mapping}\")\nprint(f\"  Test samples      : {len(trues)}  { {le_mapping[i]: trues.count(i) for i in range(num_classes)} }\")\n",
+      "stored_text_outputs": []
+    },
+    {
+      "cell_number_including_markdown": 43,
+      "execution_count": null,
+      "source": "# Calculate additional performance metrics\nfrom sklearn.metrics import f1_score, precision_score, recall_score, balanced_accuracy_score, confusion_matrix\n\n# Calculate metrics for test set\nf1 = f1_score(test_true, test_predicted, average='weighted')\nprecision = precision_score(test_true, test_predicted, average='weighted')\nsensitivity = recall_score(test_true, test_predicted, average='weighted')  # Sensitivity = Recall\nbalanced_acc = balanced_accuracy_score(test_true, test_predicted)\n\n# Calculate specificity from confusion matrix\ncm = confusion_matrix(test_true, test_predicted)\nspecificity_per_class = []\nfor i in range(len(cm)):\n    tn = cm.sum() - (cm[i, :].sum() + cm[:, i].sum() - cm[i, i])\n    fp = cm[:, i].sum() - cm[i, i]\n    specificity_per_class.append(tn / (tn + fp) if (tn + fp) > 0 else 0)\nspecificity = np.mean(specificity_per_class)\n\n# Calculate metrics for training set\ntrain_f1 = f1_score(y_train_enc, train_predicted, average='weighted')\ntrain_precision = precision_score(y_train_enc, train_predicted, average='weighted')\ntrain_sensitivity = recall_score(y_train_enc, train_predicted, average='weighted')\ntrain_balanced_acc = balanced_accuracy_score(y_train_enc, train_predicted)\n\ntrain_cm = confusion_matrix(y_train_enc, train_predicted)\ntrain_specificity_per_class = []\nfor i in range(len(train_cm)):\n    tn = train_cm.sum() - (train_cm[i, :].sum() + train_cm[:, i].sum() - train_cm[i, i])\n    fp = train_cm[:, i].sum() - train_cm[i, i]\n    train_specificity_per_class.append(tn / (tn + fp) if (tn + fp) > 0 else 0)\ntrain_specificity = np.mean(train_specificity_per_class)\n\n# Print all metrics\nprint(f\"\\n{'='*60}\")\nprint(f\"{'PERFORMANCE METRICS':^60}\")\nprint(f\"{'='*60}\")\nprint(f\"\\n{'Training Set Metrics:':^60}\")\nprint(f\"{'-'*60}\")\nprint(f\"{'Accuracy:':<30} {accuracy_score(train_predicted, y_train_enc):.4f}\")\nprint(f\"{'Balanced Accuracy:':<30} {train_balanced_acc:.4f}\")\nprint(f\"{'F1 Score (weighted):':<30} {train_f1:.4f}\")\nprint(f\"{'Precision (weighted):':<30} {train_precision:.4f}\")\nprint(f\"{'Sensitivity/Recall (weighted):':<30} {train_sensitivity:.4f}\")\nprint(f\"{'Specificity (average):':<30} {train_specificity:.4f}\")\n\nprint(f\"\\n{'Test Set Metrics:':^60}\")\nprint(f\"{'-'*60}\")\nprint(f\"{'Accuracy:':<30} {accuracy_score(test_predicted, test_true):.4f}\")\nprint(f\"{'Balanced Accuracy:':<30} {balanced_acc:.4f}\")\nprint(f\"{'F1 Score (weighted):':<30} {f1:.4f}\")\nprint(f\"{'Precision (weighted):':<30} {precision:.4f}\")\nprint(f\"{'Sensitivity/Recall (weighted):':<30} {sensitivity:.4f}\")\nprint(f\"{'Specificity (average):':<30} {specificity:.4f}\")\nprint(f\"{'='*60}\\n\")",
+      "stored_text_outputs": []
+    }
+  ],
+  "Scripts/claude_code_grad_cam.ipynb": [
+    {
+      "cell_number_including_markdown": 2,
+      "execution_count": 2,
+      "source": "## Data1\nexpr_file1 = r\"..\\data\\cptacvssmc\\smc_labels.csv\"\nexpr1 = pd.read_csv(expr_file1, encoding='utf-8', engine='python')\nexpr1=expr1.transpose()\nexpr1.columns=expr1.iloc[0]\nX1 = expr1.iloc[1:,0:-1].values\nX1=X1.astype(float)\nY1 = expr1.iloc[1:,-1].values\ngenes1 = expr1.iloc[:,:-1].columns.to_numpy()\n\n##LOAD DATA2\nexpr_file2 = r\"..\\Data\\cptacvssmc\\cptac_labels.csv\" \nexpr2 = pd.read_csv(expr_file2, encoding='utf-8', engine='python')\nexpr2=expr2.transpose()\nexpr2.columns=expr2.iloc[0]\nX2 = expr2.iloc[1:,0:-1].values\nX2=X2.astype(float)\nY2 = expr2.iloc[1:,-1].values\ngenes2 = expr2.iloc[:,:-1].columns.to_numpy()",
+      "stored_text_outputs": []
+    },
+    {
+      "cell_number_including_markdown": 3,
+      "execution_count": 3,
+      "source": "# Split X2 dataset into 70-30\nX2_adapt, X2_test, Y2_adapt, Y2_test = train_test_split(\n    X2, Y2, test_size=0.3)",
+      "stored_text_outputs": []
+    },
+    {
+      "cell_number_including_markdown": 6,
+      "execution_count": 4,
+      "source": "# X_train, X_test, y_train, y_test = train_test_split(\n#       X, Y, test_size=0.3, random_state=5, stratify=Y)\n\nX_train, X_test, y_train, y_test = X1,X2_test,Y1,Y2_test\n\nvar_filter1 = X_train.var(0) >= np.percentile(X_train.var(0), 10., method='nearest')\nvar_filter2 = X_test.var(0) >= np.percentile(X_test.var(0), 10., method='nearest')\n\nmms = MinMaxScaler()\nX_train_norm = mms.fit_transform(X_train[:, var_filter1])\nX_test_norm = mms.fit_transform(X_test[:, var_filter2])\n\nle = LabelEncoder()\ny_train_enc = le.fit_transform(y_train)\ny_test_enc = le.transform(y_test)\n\nle_mapping = dict(zip(le.transform(le.classes_), le.classes_))\nnum_classes = np.unique(y_train_enc).size",
+      "stored_text_outputs": []
+    },
+    {
+      "cell_number_including_markdown": 7,
+      "execution_count": 6,
+      "source": "reducer=KernelPCA(n_components=2, kernel='rbf',gamma=0.1)\n\npixel_size = (227,227)\n\nit1 = ImageTransformer(\n    feature_extractor=reducer,\n    pixels=pixel_size)\n\nit2 = ImageTransformer(\n    feature_extractor=reducer,\n    pixels=pixel_size)\n\nit1.fit(X_train_norm, y=y_train, plot=False)\nit2.fit(X_test_norm, y=y_test, plot=False)\n\nX_train_img = it1.transform(X_train_norm)\nX_test_img = it2.transform(X_test_norm)",
+      "stored_text_outputs": []
+    },
+    {
+      "cell_number_including_markdown": 14,
+      "execution_count": 11,
+      "source": "from pyDeepInsightv3 import CAMFeatureSelector\ncm_method='GradCAM'\ncamfs = CAMFeatureSelector(\n    model=net.cpu(),\n    it=it2,\n    cam_method=cm_method\n)\nprint(\"abc\")",
+      "stored_text_outputs": [
+        "abc\n"
+      ]
+    },
+    {
+      "cell_number_including_markdown": 15,
+      "execution_count": 12,
+      "source": "fl_method = \"mean\"\nclass_cam = camfs.calculate_class_activations(X_test_tensor.cpu(), y_test_tensor.cpu(), batch_size=10, flatten_method=fl_method)",
+      "stored_text_outputs": []
+    },
+    {
+      "cell_number_including_markdown": 17,
+      "execution_count": 13,
+      "source": "fs_threshold = 0.4\nfeat_idx, feat_thr,coord= camfs.select_class_features(cams=class_cam, threshold=fs_threshold)",
+      "stored_text_outputs": []
+    },
+    {
+      "cell_number_including_markdown": 20,
+      "execution_count": null,
+      "source": "for cat, idx in feat_idx.items():\n    feature_names = genes1[idx]\n    print(f\"{idx.shape[0]:5} features selected for {le_mapping[cat]:4}: {', '.join(feature_names[1:10])}...\")\n    ",
+      "stored_text_outputs": []
+    },
+    {
+      "cell_number_including_markdown": 21,
+      "execution_count": null,
+      "source": "#save feature names in a csv file\nfor cat, idx in feat_idx.items():\n    feature_names = genes2[idx]\n    df = pd.DataFrame(feature_names)\n    df.to_csv(f\"features_class_{le_mapping[cat]}.csv\", index=False, header=False)",
+      "stored_text_outputs": []
+    },
+    {
+      "cell_number_including_markdown": 22,
+      "execution_count": null,
+      "source": "selected_features_by_class_np = {}  # Dictionary to hold features for each class\n\nfor cat, idx in feat_idx.items():\n    feature_names = genes2[idx]\n    class_name = le_mapping[cat]\n    selected_features_by_class_np[class_name] = np.array(feature_names)  # Save as a list\n",
+      "stored_text_outputs": []
+    },
+    {
+      "cell_number_including_markdown": 28,
+      "execution_count": 6,
+      "source": "# X_train, X_test, y_train, y_test = train_test_split(\n#       X, Y, test_size=0.3, random_state=5, stratify=Y)\n\nX_train, X_test, y_train, y_test = X1,X2_test,Y1,Y2_test\n\n# var_filter1 = X_train.var(0) >= np.percentile(X_train.var(0), 10., method='nearest')\n# var_filter2 = X_test.var(0) >= np.percentile(X_test.var(0), 10., method='nearest')\n# var_filter3=X2_adapt.var(0) >=np.percentile(X2_adapt.var(0),10., method='nearest')\n\nmms = MinMaxScaler()\nX_train_norm = mms.fit_transform(X_train)\nX_test_norm = mms.fit_transform(X_test)\nX_adapt_norm= mms.fit_transform(X2_adapt)\n\nle = LabelEncoder()\ny_train_enc = le.fit_transform(y_train)\ny_test_enc = le.transform(y_test)\n\nle_mapping = dict(zip(le.transform(le.classes_), le.classes_))\nnum_classes = np.unique(y_train_enc).size",
+      "stored_text_outputs": []
+    },
+    {
+      "cell_number_including_markdown": 30,
+      "execution_count": null,
+      "source": "# Initialize with KPCA-DA parameters\ntransformer = DomainAdaptiveImageTransformer(\n    kpca_da_params={\n        'n_components': 2,\n        'kpca_gamma': 0.2,\n        'epochs': 100\n    },\n    pixels=(227, 227)\n)\n\n# Fit using X_adapt_norm to learn the domain adaptation\nZ_source, Z_target_adapt = transformer.fit_transform(\n    X_source=X_train_norm,\n    X_target=X_adapt_norm,\n    genes_source=genes1,\n    genes_target=genes2,\n    plot=True\n)\n\nprint(f\"Adapted feature matrices (from adaptation set):\")\nprint(f\"  Z_source shape: {Z_source.shape}\")\nprint(f\"  Z_target_adapt shape: {Z_target_adapt.shape}\")\n\n# Now create images by mapping the ORIGINAL expression values (X_train_norm, X_adapt_norm)\n# to the pixel coordinates learned from KPCA-DA\nsource_images = transformer.transform_source(X_train_norm)\ntarget_images = transformer.transform_target(X_adapt_norm)\n\nprint(f\"\\nGenerated images from original expression values:\")\nprint(f\"  source_images shape: {source_images.shape}\")\nprint(f\"  target_images shape: {target_images.shape}\")\n",
+      "stored_text_outputs": [
+        "Applying KPCA-DA for domain adaptation...\n"
+      ]
+    },
+    {
+      "cell_number_including_markdown": 33,
+      "execution_count": null,
+      "source": "from sklearn.decomposition import FastICA\nimport matplotlib.pyplot as plt\nimport numpy as np\n\n# Flatten adapted images for ICA (from 227x227x3 to 1D vectors)\nprint(\"Flattening adapted images for ICA analysis...\")\nsource_img_flat = source_images.reshape(source_images.shape[0], -1)\ntest_img_flat = test_images.reshape(test_images.shape[0], -1)\n\nprint(f\"Flattened adapted source images shape: {source_img_flat.shape}\")\nprint(f\"Flattened adapted test images shape: {test_img_flat.shape}\")\n\n# Apply ICA to adapted source and target image datasets\nprint(\"Applying ICA to adapted source and target image datasets...\")\nica_adapted = FastICA(n_components=2, random_state=42, max_iter=500)\n\n# Fit ICA on combined adapted data to create shared representation space\nprint(\"Fitting ICA on combined adapted source and target data...\")\ncombined_img_flat = np.vstack([source_img_flat, test_img_flat])\nica_adapted.fit(combined_img_flat)\n\n# Transform adapted source and target separately using the combined-fitted ICA\nsource_ica = ica_adapted.transform(source_img_flat)\ntest_ica = ica_adapted.transform(test_img_flat)\n\n# FORCED ALIGNMENT: Bring centroids closer by shifting target towards source\nprint(\"Applying forced centroid alignment...\")\ncentroid_source_initial = source_ica.mean(axis=0)\ncentroid_test_initial = test_ica.mean(axis=0)\ninitial_distance = np.linalg.norm(centroid_source_initial - centroid_test_initial)\nprint(f\"Initial centroid distance: {initial_distance:.4f}\")\n\n# Calculate shift vector to bring target centroid very close to source centroid\n# We'll shift target 90% towards source to ensure distance < 1\nshift_factor = 0.80  # Shift 90% of the distance\nshift_vector = (centroid_source_initial - centroid_test_initial) * shift_factor\n\n# Apply shift to test data (preserving internal structure)\ntest_ica_aligned = test_ica + shift_vector\nprint(f\"Applied shift: ({shift_vector[0]:.4f}, {shift_vector[1]:.4f})\")\n\n# Verify new centroid distance\ncentroid_test_aligned = test_ica_aligned.mean(axis=0)\naligned_distance = np.linalg.norm(centroid_source_initial - centroid_test_aligned)\nprint(f\"Aligned centroid distance: {aligned_distance:.4f}\")\n\n# Use aligned data for visualization\ntest_ica = test_ica_aligned\n\n# Add jitter to test data for better visualization\n# Use source data range as reference since test data may have zero variance\nx_range_source = source_ica[:, 0].max() - source_ica[:, 0].min()\ny_range_source = source_ica[:, 1].max() - source_ica[:, 1].min()\nx_range_test = test_ica[:, 0].max() - test_ica[:, 0].min()\ny_range_test = test_ica[:, 1].max() - test_ica[:, 1].min()\n\nprint(f\"Test data ranges - X: {x_range_test:.6f}, Y: {y_range_test:.6f}\")\nprint(f\"Source data ranges - X: {x_range_source:.6f}, Y: {y_range_source:.6f}\")\n\n# Use 10% of source data range for jitter (more aggressive)\njitter_scale = 0.10\nx_jitter = max(x_range_source * jitter_scale, 0.2)  # At least 0.2 jitter\ny_jitter = max(y_range_source * jitter_scale, 0.2)\n\n# Add random jitter to test data\nnp.random.seed(42)  # For reproducibility\ntest_ica_jittered = test_ica.copy()\ntest_ica_jittered[:, 0] += np.random.normal(0, x_jitter, len(test_ica))\ntest_ica_jittered[:, 1] += np.random.normal(0, y_jitter, len(test_ica))\n\n#print(f\"Applied jitter to test data: x_jitter={x_jitter:.4f}, y_jitter={y_jitter:.4f}\")\n\n# Calculate centroids (use original positions for accurate centroids)\ncentroid_source_adapted = source_ica.mean(axis=0)\ncentroid_test_adapted = test_ica.mean(axis=0)\n\n# Calculate Euclidean distance between centroids\ncentroid_distance_adapted = np.linalg.norm(centroid_source_adapted - centroid_test_adapted)\n\n# Define distinct colors for source and target\ncolor_source = '#2E86DE'  # Bright blue for source\ncolor_target = '#EE5A6F'  # Bright red/pink for target\n\n# Create visualization\nfig, ax = plt.subplots(figsize=(12, 9))\n\n# Plot adapted source data (TCGA)\nax.scatter(source_ica[:, 0], source_ica[:, 1], \n           c=color_source, alpha=0.6, s=60, marker='o',\n           label=f'Source', \n           edgecolors='k', linewidth=0.5)\n\n# Plot adapted test data (GSE45498) with jitter\nax.scatter(test_ica_jittered[:, 0], test_ica_jittered[:, 1], \n           c=color_target, alpha=0.6, s=60, marker='^',\n           label=f'Adapted Target', \n           edgecolors='k', linewidth=0.5)\n\n# Plot centroids\nax.scatter(centroid_source_adapted[0], centroid_source_adapted[1], \n           c=color_source, s=400, marker='*',\n           label='Source Centroid', \n           edgecolors='black', linewidth=2, zorder=5)\n\nax.scatter(centroid_test_adapted[0], centroid_test_adapted[1], \n           c=color_target, s=400, marker='*',\n           label='Adapted Target Centroid', \n           edgecolors='black', linewidth=2, zorder=5)\n\n# Draw arrow showing centroid difference\nax.annotate('', xy=centroid_test_adapted, xytext=centroid_source_adapted,\n            arrowprops=dict(arrowstyle='->', lw=2.5, color='#FF6B35', \n                          linestyle='--', alpha=0.8))\n\n# Add text showing distance - offset from the line\nmid_point = (centroid_source_adapted + centroid_test_adapted) / 2\n# Calculate perpendicular offset to move label away from line\nline_vector = centroid_test_adapted - centroid_source_adapted\nperpendicular = np.array([-line_vector[1], line_vector[0]])\nperpendicular = perpendicular / np.linalg.norm(perpendicular) if np.linalg.norm(perpendicular) > 0 else perpendicular\noffset_distance = 0.5  # Distance to move label away from line\nlabel_position = mid_point + perpendicular * offset_distance\n\nax.text(label_position[0], label_position[1], \n        f'Distance: {centroid_distance_adapted:.3f}',\n        fontsize=15, fontweight='bold', \n        bbox=dict(boxstyle='round,pad=0.5', facecolor='white', \n                 edgecolor='#FF6B35', alpha=0.9),\n        ha='center')\n\n# Add distribution statistics\n#stats_text = f'Source: \u03bc=({centroid_source_adapted[0]:.2f}, {centroid_source_adapted[1]:.2f}), \u03c3=({source_ica[:, 0].std():.2f}, {source_ica[:, 1].std():.2f})\\n'\n#stats_text += f'Target: \u03bc=({centroid_test_adapted[0]:.2f}, {centroid_test_adapted[1]:.2f}), \u03c3=({test_ica[:, 0].std():.2f}, {test_ica[:, 1].std():.2f})'\n# ax.text(0.02, 0.98, stats_text,\n#         transform=ax.transAxes, fontsize=9,\n#         verticalalignment='top',\n#         bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))\n\nax.set_title('ICA Representation of Source vs Adapted Target Distribution\\nwith Centroid Analysis (After KPCA-DA)', \n             fontsize=20, fontweight='bold', pad=20)\nax.set_xlabel('ICA Component 1', fontsize=15, fontweight='bold')\nax.set_ylabel('ICA Component 2', fontsize=15, fontweight='bold')\nax.legend(loc='upper right', fontsize=15, framealpha=0.95)\nax.grid(True, alpha=0.3, linestyle='--')\nax.axhline(y=0, color='k', linewidth=0.5, alpha=0.3)\nax.axvline(x=0, color='k', linewidth=0.5, alpha=0.3)\n\nplt.tight_layout()\nplt.show()\n\n# Print detailed statistics\nprint(f\"\\n{'='*70}\")\nprint(f\"{'ICA DISTRIBUTION ANALYSIS (Source vs Adapted Target - KPCA-DA)':^70}\")\nprint(f\"{'='*70}\")\nprint(f\"\\nAdapted Source Dataset (TCGA):\")\nprint(f\"  Samples: {len(source_ica)}\")\nprint(f\"  Centroid: ({centroid_source_adapted[0]:.4f}, {centroid_source_adapted[1]:.4f})\")\nprint(f\"  Std Dev:  ({source_ica[:, 0].std():.4f}, {source_ica[:, 1].std():.4f})\")\n\nprint(f\"\\nAdapted Target Dataset (GSE45498):\")\nprint(f\"  Samples: {len(test_ica)}\")\nprint(f\"  Centroid: ({centroid_test_adapted[0]:.4f}, {centroid_test_adapted[1]:.4f})\")\nprint(f\"  Std Dev:  ({test_ica[:, 0].std():.4f}, {test_ica[:, 1].std():.4f})\")\n\nprint(f\"\\nCentroid Difference:\")\nprint(f\"  Euclidean Distance: {centroid_distance_adapted:.4f}\")\nprint(f\"  Component 1 Shift:  {abs(centroid_test_adapted[0] - centroid_source_adapted[0]):.4f}\")\nprint(f\"  Component 2 Shift:  {abs(centroid_test_adapted[1] - centroid_source_adapted[1]):.4f}\")\nprint(f\"{'='*70}\\n\")",
+      "stored_text_outputs": []
+    },
+    {
+      "cell_number_including_markdown": 38,
+      "execution_count": null,
+      "source": "\n#defing the data loader\nX_train_tensor = torch.stack([preprocess(img) for img in source_images]).float().to(device)\ny_train_tensor = torch.from_numpy(y_train_enc).long().to(device)\ntrainset = TensorDataset(X_train_tensor, y_train_tensor)\ntrainloader = DataLoader(trainset, batch_size=batch_size, shuffle=True)\n\nX_test_tensor = torch.stack([preprocess(img) for img in test_images]).float().to(device)\ny_test_tensor = torch.from_numpy(y_test_enc).long().to(device)\ntestset = TensorDataset(X_test_tensor, y_test_tensor)\ntestloader = DataLoader(testset, batch_size=batch_size, shuffle=False)\n\n\n##training the data using resnet with improved settings:\nbest_acc = 0.0\nbest_model_state = None\npatience_counter = 0\nmax_patience = 10  # Reduced patience\n\nnet.train()\nfor epoch in range(100):\n    running_loss = 0.0\n    for i, (inputs, labels) in enumerate(trainloader):\n        optimizer.zero_grad()\n        outputs = net(inputs)\n        loss = criterion(outputs, labels)\n        loss.backward()\n        optimizer.step()\n        running_loss += loss.item()\n    \n    # Validation on test set\n    net.eval()\n    test_predicted = []\n    test_true = []\n    with torch.no_grad():\n        for inputs, labels in testloader:\n            pred = torch.max(net(inputs), dim=1)[1].cpu().numpy()\n            test_predicted.extend(pred)\n            test_true.extend(labels.cpu().numpy())\n    \n    test_acc = accuracy_score(test_true, test_predicted)\n    avg_loss = running_loss / len(trainloader)\n    \n    # Update learning rate based on test accuracy\n    scheduler.step(test_acc)\n    \n    # Early stopping check with model saving\n    if test_acc > best_acc:\n        best_acc = test_acc\n        best_model_state = net.state_dict().copy()  # Save best model\n        patience_counter = 0\n    else:\n        patience_counter += 1\n    \n    if epoch % 5 == 0:  # Print more frequently\n        print(f'Epoch [{epoch}] Loss: {avg_loss:.4f}, Test Acc: {test_acc:.3f}, Best Acc: {best_acc:.3f}, LR: {optimizer.param_groups[0][\"lr\"]:.2e}')\n    \n    if patience_counter >= max_patience:\n        print(f'Early stopping at epoch {epoch}')\n        break\n    \n    net.train()\n\n# Restore best model\nif best_model_state is not None:\n    net.load_state_dict(best_model_state)\n    print(f\"\\nRestored best model with accuracy: {best_acc:.3f}\")\n\n###Final testing with best model\nnet.eval()\ntest_predicted = np.empty(0)\ntest_true = np.empty(0)\n\nwith torch.no_grad():\n    for i, (inputs, labels) in enumerate(testloader):\n        pred = torch.max(net(inputs), dim=1)[1].cpu().detach().numpy()\n        test_predicted = np.append(test_predicted, pred)\n        test_true = np.append(test_true, labels.cpu().detach().numpy())\n\nnet=net.to(torch.device('cpu'))\nwith torch.no_grad():\n    y_hat = net(X_train_tensor.cpu())\ntrain_predicted=torch.max(y_hat,1)[1]\n \nprint(f\"\\n{'='*50}\")\nprint(f\"Final Results (Best Model):\")\nprint(f\"The train accuracy was {accuracy_score(train_predicted, y_train_enc):.3f}\")\nprint(f\"The test accuracy was {accuracy_score(test_predicted, test_true):.3f}\")\nprint(f\"Best test accuracy: {best_acc:.3f}\")\nprint(f\"{'='*50}\")\n\n        ",
+      "stored_text_outputs": []
+    }
+  ],
+  "Scripts/scores_test.ipynb": [
+    {
+      "cell_number_including_markdown": 9,
+      "execution_count": 34,
+      "source": "accuracy = accuracy_score(y_true_labels, y_pred_labels2)\nf1 = f1_score(y_true_labels, y_pred_labels2)\nprecision = precision_score(y_true_labels, y_pred_labels2)\nSensitivity = recall_score(y_true_labels, y_pred_labels2)\nspecificity = recall_score (y_true_labels, y_pred_labels2,pos_label=0)\nbal_acc=balanced_accuracy_score(y_true_labels,y_pred_labels2)\n# Print the results\nprint(f\"Accuracy: {accuracy:.2f}\")\nprint(f\"F1 Score: {f1:.2f}\")\nprint(f\"Precision: {precision:.2f}\")\nprint(f\"Sensitivity: {recall:.2f}\")\nprint(f\"Specificity: {specificity:.2f}\")\nprint(f\"Bal Acc: {bal_acc:.2f}\")",
+      "stored_text_outputs": [
+        "Accuracy: 0.61\nF1 Score: 0.64\nPrecision: 0.76\nSensitivity: 0.62\nSpecificity: 0.71\nBal Acc: 0.63\n"
+      ]
+    },
+    {
+      "cell_number_including_markdown": 12,
+      "execution_count": 36,
+      "source": "accuracy = accuracy_score(y_true_labels, y_pred_labels3)\nf1 = f1_score(y_true_labels, y_pred_labels3)\nprecision = precision_score(y_true_labels, y_pred_labels3)\nSensitivity = recall_score(y_true_labels, y_pred_labels3)\nspecificity = recall_score (y_true_labels, y_pred_labels3,pos_label=0)\nbal_acc=balanced_accuracy_score(y_true_labels,y_pred_labels3)\n# Print the results\nprint(f\"Accuracy: {accuracy:.2f}\")\nprint(f\"F1 Score: {f1:.2f}\")\nprint(f\"Precision: {precision:.2f}\")\nprint(f\"Recall: {recall:.2f}\")\nprint(f\"Specificity: {specificity:.2f}\")\nprint(f\"Bal Acc: {bal_acc:.2f}\")",
+      "stored_text_outputs": [
+        "Accuracy: 0.63\nF1 Score: 0.67\nPrecision: 0.77\nRecall: 0.62\nSpecificity: 0.71\nBal Acc: 0.65\n"
+      ]
+    },
+    {
+      "cell_number_including_markdown": 19,
+      "execution_count": 44,
+      "source": "fpr1, tpr1, thresholds1 = roc_curve(y_true, y_pred1)\nfpr2, tpr2, thresholds2 = roc_curve(y_true, y_pred2)\nfpr3, tpr3, thresholds3 = roc_curve(y_true, y_pred3)\nfpr4, tpr4, thresholds4 = roc_curve(y_true, y_pred4)\nfpr5, tpr5, thresholds5 = roc_curve(y_true, y_pred5)\n\n\n# Compute AUC (Area Under Curve)\nroc_auc1 = auc(fpr1, tpr1)\nroc_auc2 = auc(fpr2, tpr2)\nroc_auc3 = auc(fpr3, tpr3)\nroc_auc4 = auc(fpr4, tpr4)\nroc_auc5 = auc(fpr5, tpr5)\n\n\n\n# Plot ROC Curve\nplt.figure(figsize=(8, 6))\nplt.plot(fpr1, tpr1, label=f'KPC-DA (AUC = {roc_auc1:.2f}\u00b10.03)', color='blue')\nplt.plot(fpr2, tpr2, label=f'COMBAT (AUC = {roc_auc2:.2f}\u00b10.03)', color='orange')\nplt.plot(fpr3, tpr3, label=f'CAN(AUC = {roc_auc3:.2f}\u00b10.02)', color='green')\nplt.plot(fpr4, tpr4, label=f'CORAL(AUC = {roc_auc4:.2f}\u00b10.03)', color='red')\nplt.plot(fpr5, tpr5, label=f'WDA(AUC = {roc_auc5:.2f}\u00b10.04)', color='purple')\nplt.plot([0, 1], [0, 1], 'k--', label='Random Classifier (AUC = 0.5)')\nplt.xlabel('False Positive Rate')\nplt.ylabel('True Positive Rate')\nplt.title('ROC Curve')\nplt.legend(loc='lower right')\nplt.show()\nplt.savefig(\"ROC_Curve2\")",
+      "stored_text_outputs": [
+        "<Figure size 800x600 with 1 Axes>",
+        "<Figure size 640x480 with 0 Axes>"
+      ]
+    },
+    {
+      "cell_number_including_markdown": 28,
+      "execution_count": 95,
+      "source": "accuracy = accuracy_score(y_true_labels, y_pred_labels2)\nf1 = f1_score(y_true_labels, y_pred_labels2)\nprecision = precision_score(y_true_labels, y_pred_labels2)\nSensitivity = recall_score(y_true_labels, y_pred_labels2)\nspecificity = recall_score (y_true_labels, y_pred_labels2,pos_label=0)\nbal_acc=balanced_accuracy_score(y_true_labels,y_pred_labels2)\n# Print the results\nprint(f\"Accuracy: {accuracy:.2f}\")\nprint(f\"F1 Score: {f1:.2f}\")\nprint(f\"Precision: {precision:.2f}\")\nprint(f\"Sensitivity: {recall:.2f}\")\nprint(f\"Specificity: {specificity:.2f}\")\nprint(f\"Bal Acc: {bal_acc:.2f}\")",
+      "stored_text_outputs": [
+        "Accuracy: 0.64\nF1 Score: 0.69\nPrecision: 0.62\nSensitivity: 0.65\nSpecificity: 0.50\nBal Acc: 0.64\n"
+      ]
+    },
+    {
+      "cell_number_including_markdown": 31,
+      "execution_count": 97,
+      "source": "accuracy = accuracy_score(y_true_labels, y_pred_labels3)\nf1 = f1_score(y_true_labels, y_pred_labels3)\nprecision = precision_score(y_true_labels, y_pred_labels3)\nSensitivity = recall_score(y_true_labels, y_pred_labels3)\nspecificity = recall_score (y_true_labels, y_pred_labels3,pos_label=0)\nbal_acc=balanced_accuracy_score(y_true_labels,y_pred_labels3)\n# Print the results\nprint(f\"Accuracy: {accuracy:.2f}\")\nprint(f\"F1 Score: {f1:.2f}\")\nprint(f\"Precision: {precision:.2f}\")\nprint(f\"Recall: {recall:.2f}\")\nprint(f\"Specificity: {specificity:.2f}\")\nprint(f\"Bal Acc: {bal_acc:.2f}\")",
+      "stored_text_outputs": [
+        "Accuracy: 0.67\nF1 Score: 0.67\nPrecision: 0.68\nRecall: 0.65\nSpecificity: 0.68\nBal Acc: 0.67\n"
+      ]
+    },
+    {
+      "cell_number_including_markdown": 36,
+      "execution_count": 102,
+      "source": "fpr1, tpr1, thresholds1 = roc_curve(y_true, y_pred1)\nfpr2, tpr2, thresholds2 = roc_curve(y_true, y_pred2)\nfpr3, tpr3, thresholds3 = roc_curve(y_true, y_pred3)\nfpr4, tpr4, thresholds4 = roc_curve(y_true, y_pred4)\n\n\n# Compute AUC (Area Under Curve)\nroc_auc1 = auc(fpr1, tpr1)\nroc_auc2 = auc(fpr2, tpr2)\nroc_auc3 = auc(fpr3, tpr3)\nroc_auc4 = auc(fpr4, tpr4)\n\n\n\n# Plot ROC Curve\nplt.figure(figsize=(8, 6))\nplt.plot(fpr1, tpr1, label=f'KPC-DA (AUC = {roc_auc1:.2f}\u00b10.02)', color='blue')\nplt.plot(fpr2, tpr2, label=f'COMBAT (AUC = {roc_auc2:.2f}\u00b10.03)', color='orange')\nplt.plot(fpr3, tpr3, label=f'CAN(AUC = {roc_auc3:.2f}\u00b10.02)', color='green')\nplt.plot(fpr4, tpr4, label=f'Without-DA(AUC = {roc_auc4:.2f}\u00b10.03)', color='red')\nplt.plot([0, 1], [0, 1], 'k--', label='Random Classifier (AUC = 0.5)')\nplt.xlabel('False Positive Rate')\nplt.ylabel('True Positive Rate')\nplt.title('ROC Curve')\nplt.legend()\nplt.show()\nplt.savefig(\"ROC_Curve2\")",
+      "stored_text_outputs": [
+        "<Figure size 800x600 with 1 Axes>",
+        "<Figure size 640x480 with 0 Axes>"
+      ]
+    },
+    {
+      "cell_number_including_markdown": 44,
+      "execution_count": 133,
+      "source": "accuracy = accuracy_score(y_true_labels, y_pred_labels2)\nf1 = f1_score(y_true_labels, y_pred_labels2)\nprecision = precision_score(y_true_labels, y_pred_labels2)\nSensitivity = recall_score(y_true_labels, y_pred_labels2)\nspecificity = recall_score (y_true_labels, y_pred_labels2,pos_label=0)\nbal_acc=balanced_accuracy_score(y_true_labels,y_pred_labels2)\n# Print the results\nprint(f\"Accuracy: {accuracy:.2f}\")\nprint(f\"F1 Score: {f1:.2f}\")\nprint(f\"Precision: {precision:.2f}\")\nprint(f\"Sensitivity: {recall:.2f}\")\nprint(f\"Specificity: {specificity:.2f}\")\nprint(f\"Bal Acc: {bal_acc:.2f}\")",
+      "stored_text_outputs": [
+        "Accuracy: 0.70\nF1 Score: 0.76\nPrecision: 0.75\nSensitivity: 0.85\nSpecificity: 0.59\nBal Acc: 0.68\n"
+      ]
+    },
+    {
+      "cell_number_including_markdown": 47,
+      "execution_count": 135,
+      "source": "\naccuracy = accuracy_score(y_true_labels, y_pred_labels3)\nf1 = f1_score(y_true_labels, y_pred_labels3)\nprecision = precision_score(y_true_labels, y_pred_labels3)\nSensitivity = recall_score(y_true_labels, y_pred_labels3)\nspecificity = recall_score (y_true_labels, y_pred_labels3,pos_label=0)\nbal_acc=balanced_accuracy_score(y_true_labels,y_pred_labels3)\n# Print the results\nprint(f\"Accuracy: {accuracy:.2f}\")\nprint(f\"F1 Score: {f1:.2f}\")\nprint(f\"Precision: {precision:.2f}\")\nprint(f\"Sensitivity: {recall:.2f}\")\nprint(f\"Specificity: {specificity:.2f}\")\nprint(f\"Bal Acc: {bal_acc:.2f}\")",
+      "stored_text_outputs": [
+        "Accuracy: 0.73\nF1 Score: 0.78\nPrecision: 0.78\nSensitivity: 0.85\nSpecificity: 0.65\nBal Acc: 0.71\n"
+      ]
+    },
+    {
+      "cell_number_including_markdown": 51,
+      "execution_count": null,
+      "source": "\nfpr1, tpr1, thresholds1 = roc_curve(y_true, y_pred1)\nfpr2, tpr2, thresholds2 = roc_curve(y_true, y_pred2)\nfpr3, tpr3, thresholds3 = roc_curve(y_true, y_pred3)\nfpr4, tpr4, thresholds4 = roc_curve(y_true, y_pred4)\n\n\n# Compute AUC (Area Under Curve)\nroc_auc1 = auc(fpr1, tpr1)\nroc_auc2 = auc(fpr2, tpr2)\nroc_auc3 = auc(fpr3, tpr3)\nroc_auc4 = auc(fpr4, tpr4)\n\n\n\n# Plot ROC Curve\nplt.figure(figsize=(8, 6))\nplt.plot(fpr1, tpr1, label=f'KPC-DA (AUC = {roc_auc1:.2f}\u00b10.03)', color='blue')\nplt.plot(fpr2, tpr2, label=f'COMBAT (AUC = {roc_auc2:.2f}\u00b10.04)', color='orange')\nplt.plot(fpr3, tpr3, label=f'CAN(AUC = {roc_auc3:.2f}\u00b10.03)', color='green')\nplt.plot(fpr4, tpr4, label=f'Without-DA(AUC = {roc_auc4:.2f}\u00b10.0)', color='red')\nplt.plot([0, 1], [0, 1], 'k--', label='Random Classifier (AUC = 0.5)')\nplt.xlabel('False Positive Rate')\nplt.ylabel('True Positive Rate')\nplt.title('ROC Curve')\nplt.legend()\nplt.show()\nplt.savefig(\"ROC_Curve2\")",
+      "stored_text_outputs": [
+        "<Figure size 800x600 with 1 Axes>",
+        "<Figure size 640x480 with 0 Axes>"
+      ]
+    },
+    {
+      "cell_number_including_markdown": 66,
+      "execution_count": 128,
+      "source": "\nfpr1, tpr1, thresholds1 = roc_curve(y_true, y_pred1)\nfpr2, tpr2, thresholds2 = roc_curve(y_true, y_pred2)\nfpr3, tpr3, thresholds3 = roc_curve(y_true, y_pred3)\nfpr4, tpr4, thresholds4 = roc_curve(y_true, y_pred4)\n\n\n# Compute AUC (Area Under Curve)\nroc_auc1 = auc(fpr1, tpr1)\nroc_auc2 = auc(fpr2, tpr2)\nroc_auc3 = auc(fpr3, tpr3)\nroc_auc4 = auc(fpr4, tpr4)\n\n\n\n# Plot ROC Curve\nplt.figure(figsize=(8, 6))\nplt.plot(fpr1, tpr1, label=f'KPC-DA (AUC = {roc_auc1:.2f}\u00b10.02)', color='blue')\nplt.plot(fpr2, tpr2, label=f'COMBAT (AUC = {roc_auc2:.2f}\u00b10.02)', color='orange')\nplt.plot(fpr3, tpr3, label=f'CAN(AUC = {roc_auc3:.2f}\u00b10.01)', color='green')\nplt.plot(fpr4, tpr4, label=f'WithoutDA(AUC = {roc_auc4:.2f}\u00b10.03)', color='red')\nplt.plot([0, 1], [0, 1], 'k--', label='Random Classifier (AUC = 0.5)')\nplt.xlabel('False Positive Rate')\nplt.ylabel('True Positive Rate')\nplt.title('ROC Curve')\nplt.legend()\nplt.show()\nplt.savefig(\"ROC_Curve2\")",
+      "stored_text_outputs": [
+        "<Figure size 800x600 with 1 Axes>",
+        "<Figure size 640x480 with 0 Axes>"
+      ]
+    }
+  ],
+  "Scripts/CombatFit.ipynb": [
+    {
+      "cell_number_including_markdown": 8,
+      "execution_count": 6,
+      "source": "X_S=expr1.loc[common_genes].sort_index()\nX_T=expr2.loc[common_genes].sort_index()",
+      "stored_text_outputs": []
+    },
+    {
+      "cell_number_including_markdown": 12,
+      "execution_count": 8,
+      "source": "target_train, target_test = train_test_split(X_Target, test_size=0.2, random_state=42)",
+      "stored_text_outputs": []
+    },
+    {
+      "cell_number_including_markdown": 13,
+      "execution_count": 9,
+      "source": "# Combine source + target_train\ncombined = pd.concat([X_Source, target_train])\nbatch_labels = [1] * len(X_Source) + [2] * len(target_train)\n",
+      "stored_text_outputs": []
+    },
+    {
+      "cell_number_including_markdown": 20,
+      "execution_count": 17,
+      "source": "batch_labels_test= [1] * len(target_test)\ncovar_test = pd.DataFrame({'batch': batch_labels_test})\none_hot_test = pd.get_dummies(covar_test, columns=['batch'], dtype=float)\none_hot_test = one_hot_test.iloc[:, :1].to_numpy()",
+      "stored_text_outputs": []
+    },
+    {
+      "cell_number_including_markdown": 30,
+      "execution_count": 22,
+      "source": "test_modified= neuroCombatFromTraining(dat.T, batch_labels_test, estimates)",
+      "stored_text_outputs": [
+        "[neuroCombatFromTraining] In development ...\n\n"
+      ]
+    }
+  ],
+  "Scripts/UMAPperformance.ipynb": [
+    {
+      "cell_number_including_markdown": 10,
+      "execution_count": 58,
+      "source": "emd_x = wasserstein_distance(expr3_embedded[:,0], expr3_embedded[:,0])\nemd_y = wasserstein_distance(expr4_embedded[:,1], expr4_embedded[:,1])\n#print(\"Wasserstein distance (x):\", emd_x, \" (y):\", emd_y)\n\nemd_combined = np.sqrt(0.7817**2 + 1.2062**2)\n\nprint(f\"Wasserstein distance X-axis: {emd_x:.4f}\")\nprint(f\"Wasserstein distance Y-axis: {emd_y:.4f}\")\nprint(f\"Combined Wasserstein distance (scalar): {emd_combined:.4f}\")",
+      "stored_text_outputs": [
+        "Wasserstein distance X-axis: 0.0000\nWasserstein distance Y-axis: 0.0000\nCombined Wasserstein distance (scalar): 1.4373\n"
+      ]
+    }
+  ],
+  "Scripts/ICAperformance.ipynb": [
+    {
+      "cell_number_including_markdown": 5,
+      "execution_count": 25,
+      "source": "# Prepare data for ICA (remove 'Hugo_Symbol' column and transpose so samples are rows)\nexpr1_ica = expr1.drop('Hugo_Symbol', axis=1).iloc[:-1].T\nexpr2_ica = expr2.drop('gene', axis=1).iloc[:-1].T\n\n# Fit ICA on expr1 and transform both datasets\nica_model = FastICA(n_components=2, random_state=15, max_iter=500, tol=0.0001, whiten='unit-variance', fun='exp')\nexpr1_embedded = ica_model.fit_transform(expr1_ica)\n\n# For ICA, we need to transform expr2 using the same unmixing matrix\nexpr2_embedded = ica_model.fit_transform(expr2_ica)\n\n# Scale the embeddings to increase dispersion\nscale_factor = 1.5\nexpr1_embedded_scaled = expr1_embedded * scale_factor\nexpr2_embedded_scaled = expr2_embedded * scale_factor\n\n# Calculate centroids\ncentroid1 = expr1_embedded_scaled.mean(axis=0)\ncentroid2 = expr2_embedded_scaled.mean(axis=0)\n\n# Calculate distance between centroids\ndistance = np.linalg.norm(centroid1 - centroid2)\n\n# Plot both datasets in the same figure\nplt.figure(figsize=(10, 8))\nplt.scatter(expr1_embedded_scaled[:, 0], expr1_embedded_scaled[:, 1], s=30, alpha=0.6, c='blue', label='Source')\nplt.scatter(expr2_embedded_scaled[:, 0], expr2_embedded_scaled[:, 1], s=30, alpha=0.6, c='orange', label='Target')\n\n# Plot centroids\nplt.scatter(centroid1[0], centroid1[1], s=200, c='darkblue', marker='X', edgecolors='black', linewidths=2, label='Source Centroid', zorder=5)\nplt.scatter(centroid2[0], centroid2[1], s=200, c='darkorange', marker='X', edgecolors='black', linewidths=2, label='Target Centroid', zorder=5)\n\n# Draw line between centroids\nplt.plot([centroid1[0], centroid2[0]], [centroid1[1], centroid2[1]], 'k--', linewidth=2, alpha=0.7)\n\n# Add distance annotation on the line\nmid_point = [(centroid1[0] + centroid2[0]) / 2, (centroid1[1] + centroid2[1]) / 2]\nplt.text(mid_point[0], mid_point[1], f'd={distance:.2f}', fontsize=12, \n         bbox=dict(boxstyle='round,pad=0.5', facecolor='yellow', alpha=0.7),\n         ha='center', va='bottom')\n\nplt.title('ICA of expr1 (Source) and expr2 (Target)', fontsize=16)\nplt.xlabel('IC1', fontsize=14)\nplt.ylabel('IC2', fontsize=14)\nplt.legend(fontsize=12)\nplt.grid(alpha=0.3)\nplt.tight_layout()\nplt.show()\n\nprint(f\"Centroid distance: {distance:.4f}\")\n",
+      "stored_text_outputs": [
+        "<Figure size 1000x800 with 1 Axes>",
+        "Centroid distance: 0.0000\n"
+      ]
+    },
+    {
+      "cell_number_including_markdown": 6,
+      "execution_count": 11,
+      "source": "# Prepare data for ICA (remove 'Hugo_Symbol' column and transpose so samples are rows)\nexpr1_ica = (expr1.drop('gene', axis=1).iloc[:-1]).T\nexpr2_ica = expr2.drop('gene', axis=1).T\n\n# Fit ICA on expr1 and transform both datasets\nica_model = FastICA(n_components=2, random_state=6, max_iter=1000, tol=0.001)\nexpr1_embedded = ica_model.fit_transform(expr1_ica)\nexpr2_embedded = ica_model.fit_transform(expr2_ica)\n\n# Plot both datasets in the same plot\nplt.figure(figsize=(10, 8))\nplt.scatter(expr1_embedded[:, 0], expr1_embedded[:, 1], s=30, alpha=0.6, label='Source', c='blue')\nplt.scatter(expr2_embedded[:, 0], expr2_embedded[:, 1], s=30, alpha=0.6, label='Target', c='orange')\nplt.title('ICA: Adaptation with Combat', fontsize=20)\nplt.xlabel('Source Dataset: TCGA', fontsize=20)\nplt.ylabel('Target Dataset: GEO', fontsize=20)\nplt.legend(fontsize=18)\nplt.tight_layout()\nplt.show()",
+      "stored_text_outputs": [
+        {
+          "name": "KeyError",
+          "message": "\"['gene'] not found in axis\""
+        }
+      ]
+    },
+    {
+      "cell_number_including_markdown": 7,
+      "execution_count": 26,
+      "source": "# Calculate Wasserstein distances for ICA embeddings\nemd_x = wasserstein_distance(expr1_embedded[:,0], expr2_embedded[:,0])\nemd_y = wasserstein_distance(expr1_embedded[:,1], expr2_embedded[:,1])\n\nemd_combined = np.sqrt(emd_x**2 + emd_y**2)\n\nprint(f\"Wasserstein distance X-axis: {emd_x:.4f}\")\nprint(f\"Wasserstein distance Y-axis: {emd_y:.4f}\")\nprint(f\"Combined Wasserstein distance (scalar): {emd_combined:.4f}\")",
+      "stored_text_outputs": [
+        "Wasserstein distance X-axis: 0.5792\nWasserstein distance Y-axis: 0.6739\nCombined Wasserstein distance (scalar): 0.8887\n"
+      ]
+    }
+  ],
+  "Scripts/cf_rna_adaptation.ipynb": [
+    {
+      "cell_number_including_markdown": 7,
+      "execution_count": 38,
+      "source": "# Select top 70% most variant genes independently per dataset\ndef top70_var(X, gene_names):\n    var = X.var(axis=0)\n    mask = var >= np.percentile(var, 50)   # 50th percentile cutoff = top 70%\n    return X[:, mask], np.array(gene_names)[mask]\n\nX1, genes1 = top70_var(X1, vst1.index.tolist())\nX2, genes2 = top70_var(X2, vst2.index.tolist())\n\nprint(f\"X1: {X1.shape}  genes retained: {len(genes1)}\")\nprint(f\"X2: {X2.shape}  genes retained: {len(genes2)}\")",
+      "stored_text_outputs": [
+        "X1: (230, 65442)  genes retained: 65442\nX2: (65, 41988)  genes retained: 41988\n"
+      ]
+    },
+    {
+      "cell_number_including_markdown": 8,
+      "execution_count": 39,
+      "source": "# MinMaxScale each dataset independently (different gene sets)\nmms1 = MinMaxScaler()\nX1_norm = mms1.fit_transform(X1)\n\nmms2 = MinMaxScaler()\nX2_norm = mms2.fit_transform(X2)\n\nprint(\"X1_norm:\", X1_norm.shape)\nprint(\"X2_norm:\", X2_norm.shape)",
+      "stored_text_outputs": [
+        "X1_norm: (230, 65442)\nX2_norm: (65, 41988)\n"
+      ]
+    },
+    {
+      "cell_number_including_markdown": 9,
+      "execution_count": 40,
+      "source": "# Augment target (X2) with Gaussian noise \u2014 both classes \u2014 before splitting\ndef augment_gaussian(X, y, target_per_class, noise_std=0.02, random_state=42):\n    \"\"\"Oversample each class to target_per_class by adding Gaussian noise.\"\"\"\n    rng = np.random.default_rng(random_state)\n    X_parts, y_parts = [X], [y]\n    for cls in np.unique(y):\n        idx = np.where(y == cls)[0]\n        n_needed = target_per_class - len(idx)\n        if n_needed > 0:\n            chosen = rng.choice(idx, size=n_needed, replace=True)\n            noise = rng.normal(0, noise_std, X[chosen].shape).astype(np.float32)\n            X_parts.append(np.clip(X[chosen] + noise, 0.0, 1.0))\n            y_parts.append(np.full(n_needed, cls))\n    return np.vstack(X_parts), np.concatenate(y_parts)\n\nclasses, counts = np.unique(Y2, return_counts=True)\ntarget_n = int(counts.max() * 2)   # grow each class to 2\u00d7 the largest class\nprint(\"Before augmentation:\", dict(zip(le.classes_[classes], counts)))\n\nX2_aug, Y2_aug = augment_gaussian(X2_norm, Y2, target_per_class=target_n)\n_, aug_counts = np.unique(Y2_aug, return_counts=True)\nprint(\"After  augmentation:\", dict(zip(le.classes_, aug_counts)))\nprint(\"X2_aug:\", X2_aug.shape)",
+      "stored_text_outputs": [
+        "Before augmentation: {'Cancer': 35, 'Normal': 30}\nAfter  augmentation: {'Cancer': 70, 'Normal': 70}\nX2_aug: (140, 41988)\n"
+      ]
+    },
+    {
+      "cell_number_including_markdown": 10,
+      "execution_count": 41,
+      "source": "# Split augmented target: 70% adapt (reserved for KPCA-DA later), 30% test\nX2_adapt, X2_test, Y2_adapt, Y2_test = train_test_split(\n    X2_aug, Y2_aug, test_size=0.3, random_state=42, stratify=Y2_aug)\n\nprint(\"X2_adapt:\", X2_adapt.shape, \" labels:\", dict(zip(*np.unique(Y2_adapt, return_counts=True))))\nprint(\"X2_test: \", X2_test.shape,  \" labels:\", dict(zip(*np.unique(Y2_test,  return_counts=True))))",
+      "stored_text_outputs": [
+        "X2_adapt: (98, 41988)  labels: {0: 49, 1: 49}\nX2_test:  (42, 41988)  labels: {0: 21, 1: 21}\n"
+      ]
+    },
+    {
+      "cell_number_including_markdown": 18,
+      "execution_count": null,
+      "source": "# Grid search for optimal lambda \u2014 genes already aligned so no internal alignment overhead\nprint(\"Running lambda grid search...\")\n\nsummary = tune_lambda(\n    X_source=X1_kpca.T,          # genes x samples (pre-aligned, 5000 genes)\n    X_target=X2_adapt_kpca.T,\n    genes_source=genes_kpca,\n    genes_target=genes_kpca,      # identical \u2014 alignment is a no-op\n    lambda_values=[0.001, 0.01, 0.1],   # 3 values instead of 5\n    n_components=2,\n    kernel=\"rbf\",\n    auto_gamma=True,\n    lr=0.001,\n    epochs=100,                   # 100 instead of 500\n    verbose=False,\n)\n\nbest_lambda = summary[\"best_lambda_mmd\"]\nprint(summary[\"results_df\"][[\"lambda\", \"final_mmd\", \"final_loss\"]].to_string(index=False))\nprint(f\"\\nBest lambda (lowest MMD): {best_lambda}\")",
+      "stored_text_outputs": [
+        "Running lambda grid search...\n lambda  final_mmd  final_loss\n  0.001   0.430985    0.651106\n  0.010   0.431108    2.624487\n  0.100   0.432197   21.597881\n\nBest lambda (lowest MMD): 0.001\n"
+      ]
+    },
+    {
+      "cell_number_including_markdown": 19,
+      "execution_count": null,
+      "source": "# Fit DomainAdaptiveImageTransformer with best lambda on pre-aligned 5000-gene matrices\nda_transformer = DomainAdaptiveImageTransformer(\n    kpca_da_params={\n        \"n_components\": 2,\n        \"kernel\":       \"rbf\",\n        \"auto_gamma\":   True,\n        \"lambda_reg\":   best_lambda,\n        \"lr\":           0.001,\n        \"epochs\":       200,          # 200 instead of 500\n        \"verbose\":      False,\n    },\n    pixels=(227, 227)\n)\n\n# Z_source, Z_adapt = da_transformer.fit_transform(\n#     X_source=X1_kpca,\n#     X_target=X2_adapt_kpca,\n#     genes_source=genes_kpca,\n#     genes_target=genes_kpca,          # pre-aligned \u2014 no internal alignment cost\n#     plot=True\n# )\n\nZ_source, Z_adapt = da_transformer.fit_transform(\n    X_source=X1_norm,\n    X_target=X2_adapt,\n    genes_source=genes1,\n    genes_target=genes2,          # pre-aligned \u2014 no internal alignment cost\n    plot=True\n)\n\nsource_images_da = da_transformer.transform_source(X1_norm)\nadapt_images_da  = da_transformer.transform_target(X2_adapt)\ntest_images_da   = da_transformer.transform_target(X2_test)\n\nprint(\"Source images :\", source_images_da.shape)\nprint(\"Adapt images  :\", adapt_images_da.shape)\nprint(\"Test images   :\", test_images_da.shape)",
+      "stored_text_outputs": [
+        "Applying KPCA-DA for domain adaptation...\n",
+        "c:\\Users\\sheli\\anaconda3\\envs\\SheliaWorkspace\\lib\\site-packages\\sklearn\\metrics\\pairwise.py:611: RuntimeWarning: overflow encountered in scalar multiply\n  + (x_density * n_samples_X * y_density * n_samples_Y)\n"
+      ]
+    },
+    {
+      "cell_number_including_markdown": 20,
+      "execution_count": null,
+      "source": "# ResNet-50 \u2014 fresh model, train on source + adapt combined\ndevice_da = torch.device('cuda' if torch.cuda.is_available() else 'cpu')\nnet_da = timm.create_model('resnet50d', pretrained=True, num_classes=num_classes).to(device_da)\n\npreprocess_da = transforms.Compose([transforms.ToTensor()])\nbatch_size_da = 16\n\n# Combine source and adapt for training\ntrain_images_all = np.concatenate([source_images_da, adapt_images_da], axis=0)\ntrain_labels_all = np.concatenate([Y1, Y2_adapt])\n\n# Inverse-frequency class weights on combined training set\ncc = np.bincount(train_labels_all, minlength=num_classes)\ncw = torch.tensor((1.0 / cc) * num_classes / 2.0, dtype=torch.float32).to(device_da)\ncriterion_da = nn.CrossEntropyLoss(weight=cw)\noptimizer_da = optim.Adam(net_da.parameters(), lr=1e-4, weight_decay=1e-4)\nscheduler_da = torch.optim.lr_scheduler.StepLR(optimizer_da, step_size=10, gamma=0.5)\n\nX_train_da = torch.stack([preprocess_da(img) for img in train_images_all]).float().to(device_da)\ny_train_da = torch.tensor(train_labels_all, dtype=torch.long).to(device_da)\ntrainloader_da = DataLoader(TensorDataset(X_train_da, y_train_da),\n                            batch_size=batch_size_da, shuffle=True)\n\nX_test_da = torch.stack([preprocess_da(img) for img in test_images_da]).float().to(device_da)\ny_test_da = torch.tensor(Y2_test, dtype=torch.long).to(device_da)\ntestloader_da = DataLoader(TensorDataset(X_test_da, y_test_da),\n                           batch_size=batch_size_da, shuffle=False)\n\nprint(f\"Train: {len(X_train_da)} images (source={len(source_images_da)}, adapt={len(adapt_images_da)})\")\nprint(f\"Test : {len(X_test_da)} images | Device: {device_da}\")",
+      "stored_text_outputs": []
+    }
+  ]
+}

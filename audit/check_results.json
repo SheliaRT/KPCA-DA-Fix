@@ -1,0 +1,192 @@
+{
+  "combat_gene_order": [
+    {
+      "first_mismatched_pairs": [
+        [
+          "CASP10",
+          "CASP2"
+        ],
+        [
+          "CASP2",
+          "CASP10"
+        ],
+        [
+          "MMP14",
+          "MMP2"
+        ]
+      ],
+      "position_matches": 220,
+      "shared_names": 228,
+      "source": "TvsN/TCGA_BRCA_NvT.csv",
+      "source_rows": 228,
+      "target": "TvsN/GSE45498_NvT.csv",
+      "target_rows": 228
+    },
+    {
+      "first_mismatched_pairs": [
+        [
+          "A1CF",
+          "DDR1"
+        ],
+        [
+          "A2M",
+          "RFC2"
+        ],
+        [
+          "A4GALT",
+          "HSPA6"
+        ]
+      ],
+      "position_matches": 0,
+      "shared_names": 11254,
+      "source": "TCGAvsDesmd/modified_TCGA_BRCA_log2.csv",
+      "source_rows": 11254,
+      "target": "TCGAvsDesmd/filtered_desmd_average.csv",
+      "target_rows": 11254
+    },
+    {
+      "first_mismatched_pairs": [
+        [
+          "BTBD9",
+          "BTBD8"
+        ],
+        [
+          "BTC",
+          "BTBD9"
+        ],
+        [
+          "BTD",
+          "BTC"
+        ]
+      ],
+      "position_matches": 5559,
+      "shared_names": 17484,
+      "source": "cptacvssmc/smc_labels.csv",
+      "source_rows": 17484,
+      "target": "cptacvssmc/cptac_labels.csv",
+      "target_rows": 17484
+    }
+  ],
+  "coordinate_rescaling": {
+    "embedding_centroid_distance": 22.864068426244707,
+    "pixel_maps_identical": true
+  },
+  "dataset_metadata": {
+    "TCGAvsDesmd/filtered_desmd_average.csv": {
+      "gene_rows": 12587,
+      "label_row_name": "Survival",
+      "labels": {
+        "long": 99,
+        "short": 63
+      },
+      "samples": 162,
+      "unique_gene_names": 12587
+    },
+    "TCGAvsDesmd/modified_TCGA_BRCA_log2.csv": {
+      "gene_rows": 20502,
+      "label_row_name": "survival",
+      "labels": {
+        "long": 55,
+        "short": 99
+      },
+      "samples": 154,
+      "unique_gene_names": 20501
+    },
+    "TvsN/GSE45498_NvT.csv": {
+      "gene_rows": 236,
+      "label_row_name": "Sample",
+      "labels": {
+        "Normal": 40,
+        "Tumor": 143
+      },
+      "samples": 183,
+      "unique_gene_names": 236
+    },
+    "TvsN/TCGA_BRCA_NvT.csv": {
+      "gene_rows": 22489,
+      "label_row_name": "Sample_Type",
+      "labels": {
+        "Normal": 112,
+        "Tumor": 138
+      },
+      "samples": 250,
+      "unique_gene_names": 22489
+    },
+    "cptacvssmc/cptac_labels.csv": {
+      "gene_rows": 19441,
+      "label_row_name": "PAM50-SUBTYPE1",
+      "labels": {
+        "Basal": 29,
+        "Her2": 14,
+        "LuminalA": 57,
+        "LuminalB": 17
+      },
+      "samples": 117,
+      "unique_gene_names": 19441
+    },
+    "cptacvssmc/smc_labels.csv": {
+      "gene_rows": 24694,
+      "label_row_name": "PAM50_SUBTYPE",
+      "labels": {
+        "Basal": 36,
+        "Her2": 18,
+        "LuminalA": 47,
+        "LuminalB": 65
+      },
+      "samples": 166,
+      "unique_gene_names": 24694
+    }
+  },
+  "environment": {
+    "numpy": "2.5.4",
+    "python": "3.12.0",
+    "sklearn": "1.9.1",
+    "torch": "2.14.1"
+  },
+  "kpca_equation": {
+    "code_matches_V_times_sqrt_eigenvalues": true,
+    "code_matches_paper_V_divided_by_sqrt_eigenvalues": false
+  },
+  "mmd_counterexample": {
+    "identical": {
+      "code_loss": 1.0,
+      "full_mmd2": 0.0
+    },
+    "separated": {
+      "code_loss": 5.960464477539063e-08,
+      "full_mmd2": 1.0
+    }
+  },
+  "oversample_before_split": {
+    "adapt_rows": 138,
+    "after_resampling": 198,
+    "original_patient_ids_in_both": 14,
+    "original_samples": 162,
+    "test_rows": 60,
+    "test_rows_with_patient_in_adapt": 18
+  },
+  "posthoc_centroid_shift": {
+    "after": 0.9999999999999997,
+    "before": 5.0,
+    "reduction_percent": 80.0
+  },
+  "regularizer_step": {
+    "trace_after": 1.28000009059906,
+    "trace_before": 2.0,
+    "variance_after": 0.64000004529953,
+    "variance_before": 1.0
+  },
+  "reported_final_loss": {
+    "recomputed_at_returned_embeddings": 1.004897952079773,
+    "reported": 1.006264328956604
+  },
+  "syntax": {
+    "all_code_cells_parse": true,
+    "notebooks": 9,
+    "python_files": 10
+  },
+  "transform_api": {
+    "matches_unadapted_kpca": true,
+    "max_difference_from_optimized_target": 0.007776888539940852
+  }
+}
