@@ -15,6 +15,47 @@ def clone_state_dict(model: Any) -> dict[str, Any]:
     return deepcopy(model.state_dict())
 
 
+def configure_trainable_parameters(model: Any, *, freeze_backbone: bool = False) -> dict[str, int | bool]:
+    """Configure a timm classifier for full fine-tuning or frozen features.
+
+    In frozen mode, only parameters returned by ``model.get_classifier()``
+    remain trainable. This keeps the classifier head trainable while avoiding
+    a task-specific assumption about the backbone's attribute names.
+    """
+    parameters = list(model.parameters())
+    if not parameters:
+        raise ValueError("Classifier has no parameters")
+    trainable_ids: set[int]
+    if freeze_backbone:
+        get_classifier = getattr(model, "get_classifier", None)
+        if not callable(get_classifier):
+            raise TypeError("Frozen-backbone mode requires model.get_classifier()")
+        classifier = get_classifier()
+        if not hasattr(classifier, "parameters"):
+            raise TypeError("model.get_classifier() did not return a module")
+        head_parameters = list(classifier.parameters())
+        if not head_parameters:
+            raise ValueError("Classifier head has no trainable parameters")
+        model_parameter_ids = {id(parameter) for parameter in parameters}
+        trainable_ids = {id(parameter) for parameter in head_parameters}
+        if not trainable_ids.issubset(model_parameter_ids):
+            raise ValueError("Classifier head parameters are not part of the model")
+    else:
+        trainable_ids = {id(parameter) for parameter in parameters}
+
+    for parameter in parameters:
+        parameter.requires_grad_(id(parameter) in trainable_ids)
+    trainable_count = sum(p.numel() for p in parameters if p.requires_grad)
+    frozen_count = sum(p.numel() for p in parameters if not p.requires_grad)
+    if not trainable_count:
+        raise ValueError("Classifier configuration left no trainable parameters")
+    return {
+        "freeze_backbone": bool(freeze_backbone),
+        "trainable_parameter_count": int(trainable_count),
+        "frozen_parameter_count": int(frozen_count),
+    }
+
+
 def classification_metrics(
     y_true: Sequence[Hashable],
     y_pred: Sequence[Hashable],
@@ -152,6 +193,7 @@ def fit_with_validation(
     max_epochs: int = 100,
     patience: int = 10,
     monitor: str = "balanced_accuracy",
+    freeze_batchnorm_stats: bool = False,
 ) -> dict[str, Any]:
     """Train with source validation only; this API accepts no target-test data.
 
@@ -180,6 +222,10 @@ def fit_with_validation(
 
     for epoch in range(1, max_epochs + 1):
         model.train()
+        if freeze_batchnorm_stats:
+            for module in model.modules():
+                if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
+                    module.eval()
         train_loss_sum = 0.0
         train_batches = 0
         for inputs, labels in train_loader:

@@ -1,0 +1,405 @@
+{
+  "result": "passed",
+  "cohort": "independent paired breast tumor/normal RNA-seq target",
+  "geo_accession": "GSE183947",
+  "source_urls": {
+    "expression_supplement": "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE183nnn/GSE183947/suppl/GSE183947_fpkm.csv.gz",
+    "sample_metadata": "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE183nnn/GSE183947/soft/GSE183947_family.soft.gz"
+  },
+  "matrix_path": "Data/TvsN/GSE183947_fpkm.csv.gz",
+  "matrix_sha256": "56b26609f443e42f371692e9e1c9819732bef467eb24b388ac73efbf8f366983",
+  "geo_soft_path": "Data/TvsN/GSE183947_family.soft.gz",
+  "geo_soft_sha256": "3749e25c1e32e6987c21c94fd08d0a5dbdfbe992443ea2ee21cbd751c60d8053",
+  "output_path": "Data/TvsN/GSE183947_TvsN_official_60.csv",
+  "output_sha256": "a1135533f6eb1e13e33454d6f1814d099d036ee8b7fe538ca66a0dbbf8261ad6",
+  "patient_map_path": "audit/gse183947_patient_map.json",
+  "patient_map_sha256": "cae2f1a09f6617460778ee3c30f2c12e7d0cd0dab8fe20aab1f6eab8b079f9d3",
+  "expression_measure": "FPKM as supplied; values were not transformed",
+  "gene_count": 20246,
+  "unique_gene_count": 20246,
+  "sample_count": 60,
+  "label_counts": {
+    "Tumor": 30,
+    "Normal": 30
+  },
+  "patient_count": 31,
+  "complete_paired_patient_count": 29,
+  "tumor_only_donor_ids": [
+    "2045012"
+  ],
+  "normal_only_donor_ids": [
+    "2046641"
+  ],
+  "sample_metadata_crosswalk": "GEO GSM donor/tissue characteristics matched exactly to CA.<donor>/CAP.<donor> matrix columns",
+  "samples": [
+    {
+      "gsm": "GSM5574685",
+      "donor_id": "102548",
+      "label": "Tumor",
+      "matrix_sample_id": "CA.102548"
+    },
+    {
+      "gsm": "GSM5574686",
+      "donor_id": "104338",
+      "label": "Tumor",
+      "matrix_sample_id": "CA.104338"
+    },
+    {
+      "gsm": "GSM5574687",
+      "donor_id": "105094",
+      "label": "Tumor",
+      "matrix_sample_id": "CA.105094"
+    },
+    {
+      "gsm": "GSM5574688",
+      "donor_id": "109745",
+      "label": "Tumor",
+      "matrix_sample_id": "CA.109745"
+    },
+    {
+      "gsm": "GSM5574689",
+      "donor_id": "1906415",
+      "label": "Tumor",
+      "matrix_sample_id": "CA.1906415"
+    },
+    {
+      "gsm": "GSM5574690",
+      "donor_id": "1912627",
+      "label": "Tumor",
+      "matrix_sample_id": "CA.1912627"
+    },
+    {
+      "gsm": "GSM5574691",
+      "donor_id": "1924346",
+      "label": "Tumor",
+      "matrix_sample_id": "CA.1924346"
+    },
+    {
+      "gsm": "GSM5574692",
+      "donor_id": "1926760",
+      "label": "Tumor",
+      "matrix_sample_id": "CA.1926760"
+    },
+    {
+      "gsm": "GSM5574693",
+      "donor_id": "1927842",
+      "label": "Tumor",
+      "matrix_sample_id": "CA.1927842"
+    },
+    {
+      "gsm": "GSM5574694",
+      "donor_id": "1933414",
+      "label": "Tumor",
+      "matrix_sample_id": "CA.1933414"
+    },
+    {
+      "gsm": "GSM5574695",
+      "donor_id": "1940640",
+      "label": "Tumor",
+      "matrix_sample_id": "CA.1940640"
+    },
+    {
+      "gsm": "GSM5574696",
+      "donor_id": "2004407",
+      "label": "Tumor",
+      "matrix_sample_id": "CA.2004407"
+    },
+    {
+      "gsm": "GSM5574697",
+      "donor_id": "2005288",
+      "label": "Tumor",
+      "matrix_sample_id": "CA.2005288"
+    },
+    {
+      "gsm": "GSM5574698",
+      "donor_id": "2006047",
+      "label": "Tumor",
+      "matrix_sample_id": "CA.2006047"
+    },
+    {
+      "gsm": "GSM5574699",
+      "donor_id": "2008260",
+      "label": "Tumor",
+      "matrix_sample_id": "CA.2008260"
+    },
+    {
+      "gsm": "GSM5574700",
+      "donor_id": "2009329",
+      "label": "Tumor",
+      "matrix_sample_id": "CA.2009329"
+    },
+    {
+      "gsm": "GSM5574701",
+      "donor_id": "2009381",
+      "label": "Tumor",
+      "matrix_sample_id": "CA.2009381"
+    },
+    {
+      "gsm": "GSM5574702",
+      "donor_id": "2009850",
+      "label": "Tumor",
+      "matrix_sample_id": "CA.2009850"
+    },
+    {
+      "gsm": "GSM5574703",
+      "donor_id": "2017611",
+      "label": "Tumor",
+      "matrix_sample_id": "CA.2017611"
+    },
+    {
+      "gsm": "GSM5574704",
+      "donor_id": "2039179",
+      "label": "Tumor",
+      "matrix_sample_id": "CA.2039179"
+    },
+    {
+      "gsm": "GSM5574705",
+      "donor_id": "2040686",
+      "label": "Tumor",
+      "matrix_sample_id": "CA.2040686"
+    },
+    {
+      "gsm": "GSM5574706",
+      "donor_id": "2045012",
+      "label": "Tumor",
+      "matrix_sample_id": "CA.2045012"
+    },
+    {
+      "gsm": "GSM5574707",
+      "donor_id": "2046297",
+      "label": "Tumor",
+      "matrix_sample_id": "CA.2046297"
+    },
+    {
+      "gsm": "GSM5574708",
+      "donor_id": "348981",
+      "label": "Tumor",
+      "matrix_sample_id": "CA.348981"
+    },
+    {
+      "gsm": "GSM5574709",
+      "donor_id": "354300",
+      "label": "Tumor",
+      "matrix_sample_id": "CA.354300"
+    },
+    {
+      "gsm": "GSM5574710",
+      "donor_id": "359448",
+      "label": "Tumor",
+      "matrix_sample_id": "CA.359448"
+    },
+    {
+      "gsm": "GSM5574711",
+      "donor_id": "94377",
+      "label": "Tumor",
+      "matrix_sample_id": "CA.94377"
+    },
+    {
+      "gsm": "GSM5574712",
+      "donor_id": "98389",
+      "label": "Tumor",
+      "matrix_sample_id": "CA.98389"
+    },
+    {
+      "gsm": "GSM5574713",
+      "donor_id": "98475",
+      "label": "Tumor",
+      "matrix_sample_id": "CA.98475"
+    },
+    {
+      "gsm": "GSM5574714",
+      "donor_id": "99145",
+      "label": "Tumor",
+      "matrix_sample_id": "CA.99145"
+    },
+    {
+      "gsm": "GSM5574715",
+      "donor_id": "102548",
+      "label": "Normal",
+      "matrix_sample_id": "CAP.102548"
+    },
+    {
+      "gsm": "GSM5574716",
+      "donor_id": "104338",
+      "label": "Normal",
+      "matrix_sample_id": "CAP.104338"
+    },
+    {
+      "gsm": "GSM5574717",
+      "donor_id": "105094",
+      "label": "Normal",
+      "matrix_sample_id": "CAP.105094"
+    },
+    {
+      "gsm": "GSM5574718",
+      "donor_id": "109745",
+      "label": "Normal",
+      "matrix_sample_id": "CAP.109745"
+    },
+    {
+      "gsm": "GSM5574719",
+      "donor_id": "1906415",
+      "label": "Normal",
+      "matrix_sample_id": "CAP.1906415"
+    },
+    {
+      "gsm": "GSM5574720",
+      "donor_id": "1912627",
+      "label": "Normal",
+      "matrix_sample_id": "CAP.1912627"
+    },
+    {
+      "gsm": "GSM5574721",
+      "donor_id": "1924346",
+      "label": "Normal",
+      "matrix_sample_id": "CAP.1924346"
+    },
+    {
+      "gsm": "GSM5574722",
+      "donor_id": "1926760",
+      "label": "Normal",
+      "matrix_sample_id": "CAP.1926760"
+    },
+    {
+      "gsm": "GSM5574723",
+      "donor_id": "1927842",
+      "label": "Normal",
+      "matrix_sample_id": "CAP.1927842"
+    },
+    {
+      "gsm": "GSM5574724",
+      "donor_id": "1933414",
+      "label": "Normal",
+      "matrix_sample_id": "CAP.1933414"
+    },
+    {
+      "gsm": "GSM5574725",
+      "donor_id": "1940640",
+      "label": "Normal",
+      "matrix_sample_id": "CAP.1940640"
+    },
+    {
+      "gsm": "GSM5574726",
+      "donor_id": "2004407",
+      "label": "Normal",
+      "matrix_sample_id": "CAP.2004407"
+    },
+    {
+      "gsm": "GSM5574727",
+      "donor_id": "2005288",
+      "label": "Normal",
+      "matrix_sample_id": "CAP.2005288"
+    },
+    {
+      "gsm": "GSM5574728",
+      "donor_id": "2006047",
+      "label": "Normal",
+      "matrix_sample_id": "CAP.2006047"
+    },
+    {
+      "gsm": "GSM5574729",
+      "donor_id": "2008260",
+      "label": "Normal",
+      "matrix_sample_id": "CAP.2008260"
+    },
+    {
+      "gsm": "GSM5574730",
+      "donor_id": "2009329",
+      "label": "Normal",
+      "matrix_sample_id": "CAP.2009329"
+    },
+    {
+      "gsm": "GSM5574731",
+      "donor_id": "2009381",
+      "label": "Normal",
+      "matrix_sample_id": "CAP.2009381"
+    },
+    {
+      "gsm": "GSM5574732",
+      "donor_id": "2009850",
+      "label": "Normal",
+      "matrix_sample_id": "CAP.2009850"
+    },
+    {
+      "gsm": "GSM5574733",
+      "donor_id": "2017611",
+      "label": "Normal",
+      "matrix_sample_id": "CAP.2017611"
+    },
+    {
+      "gsm": "GSM5574734",
+      "donor_id": "2039179",
+      "label": "Normal",
+      "matrix_sample_id": "CAP.2039179"
+    },
+    {
+      "gsm": "GSM5574735",
+      "donor_id": "2040686",
+      "label": "Normal",
+      "matrix_sample_id": "CAP.2040686"
+    },
+    {
+      "gsm": "GSM5574736",
+      "donor_id": "2046297",
+      "label": "Normal",
+      "matrix_sample_id": "CAP.2046297"
+    },
+    {
+      "gsm": "GSM5574737",
+      "donor_id": "2046641",
+      "label": "Normal",
+      "matrix_sample_id": "CAP.2046641"
+    },
+    {
+      "gsm": "GSM5574738",
+      "donor_id": "348981",
+      "label": "Normal",
+      "matrix_sample_id": "CAP.348981"
+    },
+    {
+      "gsm": "GSM5574739",
+      "donor_id": "354300",
+      "label": "Normal",
+      "matrix_sample_id": "CAP.354300"
+    },
+    {
+      "gsm": "GSM5574740",
+      "donor_id": "359448",
+      "label": "Normal",
+      "matrix_sample_id": "CAP.359448"
+    },
+    {
+      "gsm": "GSM5574741",
+      "donor_id": "94377",
+      "label": "Normal",
+      "matrix_sample_id": "CAP.94377"
+    },
+    {
+      "gsm": "GSM5574742",
+      "donor_id": "98389",
+      "label": "Normal",
+      "matrix_sample_id": "CAP.98389"
+    },
+    {
+      "gsm": "GSM5574743",
+      "donor_id": "98475",
+      "label": "Normal",
+      "matrix_sample_id": "CAP.98475"
+    },
+    {
+      "gsm": "GSM5574744",
+      "donor_id": "99145",
+      "label": "Normal",
+      "matrix_sample_id": "CAP.99145"
+    }
+  ],
+  "crosswalk_checks": {
+    "all_60_matrix_columns_matched_to_unique_geo_samples": true,
+    "30_tumor_and_30_normal_records_crosswalked": true,
+    "all_records_grouped_by_official_donor_characteristic": true,
+    "all_expression_values_finite_and_nonnegative": true,
+    "target_labels_used_for_patient_mapping": false,
+    "patient_grouping_source": "official GEO donor characteristic"
+  },
+  "evaluation_note": "This is an independent external development cohort, not a paper cohort. The GEO series description says there are 30 pairs, but detailed donor characteristics yield 29 complete pairs plus a tumor-only donor (2045012) and a normal-only donor (2046641). Do not infer a correction. Group samples by the official donor characteristics before splitting. Keep test labels withheld until the candidate and preprocessing policy are frozen."
+}

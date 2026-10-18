@@ -10,10 +10,12 @@ import csv
 from contextlib import redirect_stdout
 import hashlib
 import importlib
+import inspect
 from io import StringIO
 import json
 import math
 import platform
+import subprocess
 import sys
 import tempfile
 import types
@@ -35,25 +37,172 @@ import kpcada
 from experiment_protocol import (GeneAwareMinMax, make_patient_splits,
                                  ordered_common_gene_indices,
                                  patient_group_ids, patient_groups_from_mapping,
+                                 rank_variance_keep_mask,
                                  transform_target_to_images)
 from evaluation_protocol import (balanced_class_weights, classification_metrics,
+                                 configure_trainable_parameters, fit_with_validation,
                                  select_binary_threshold)
 from combat_protocol import fit_apply_combat_partitions
 from rebuild_common_frame_ica_pair import marginal_w1 as paired_ica_marginal_w1
 from rebuild_source_fitted_ica import summarize as summarize_source_fitted_ica
-from compare_tvsn_runs import (verify_code_environment_match,
+from aggregate_tvsn_comparisons import adaptation_method_signature
+from compare_tvsn_runs import (MATCHED_CONFIG_KEYS, config_value,
+                               verify_code_environment_match,
                                verify_preprocessing_policy_match,
-                               verify_representation_fit_scope)
-from kpcada import align_target_embedding_to_source
+                               verify_representation_fit_scope,
+                               verify_optimization_device_match)
+from run_withheld_experiment_grid import (verify_matched_grid_configs,
+                                          declared_config_differences,
+                                          load_frozen_spec,
+                                          verify_scaler_fit_ids)
+from kpcada import align_target_embedding_to_source, target_coordinate_integrity
+from run_tvsn_experiment import (parse_args as parse_tvsn_args, resolve_mmd_gamma,
+                                 resolve_effective_regularization_mode,
+                                 verify_input_fingerprint)
+from analyze_saved_target_gradcam import verify_patient_ids as verify_attribution_patient_ids
 from pyDeepInsightv3.gene_attribution import rank_gene_attributions
 from pyDeepInsightv3.feature_selection import CAMFeatureSelector
 from score_withheld_target_run import score_run as score_withheld_target_run
 from pyDeepInsightv3.image_transformer import ImageTransformer
 from pyDeepInsightv3.image_transformer_new import DomainAdaptiveImageTransformer
 
+import_check = subprocess.run(
+    [sys.executable, "-c", (
+        "import sys; "
+        "from Scripts.pyDeepInsightv3.image_transformer_new import "
+        "DomainAdaptiveImageTransformer; "
+        "assert any(p.endswith('/Scripts') for p in sys.path if p)"
+    )],
+    cwd=ROOT, capture_output=True, text=True, check=True,
+)
 results = {"environment": {"python": platform.python_version(),
                           "numpy": np.__version__, "sklearn": sklearn.__version__,
                           "torch": torch.__version__}}
+results["nested_image_transformer_import_fallback"] = {
+    "repository_root_package_import_succeeds": True,
+    "scripts_parent_added_to_path": True,
+}
+
+for callable_ in (kpcada.fit_transform, kpcada.KPCA_DA, kpcada.tune_lambda):
+    parameters = inspect.signature(callable_).parameters
+    assert parameters["regularization_mode"].default == "trace"
+    assert parameters["lr"].default == 0.001
+    assert parameters["epochs"].default == 500
+    assert parameters["kpca_gamma"].default == 0.2
+    if callable_ in (kpcada.fit_transform, kpcada.KPCA_DA):
+        assert parameters["lambda_reg"].default == 0.001
+results["paper_faithful_kpcada_api_defaults"] = {
+    "fit_transform": "trace",
+    "KPCA_DA": "trace",
+    "tune_lambda": "trace",
+    "default_learning_rate": 0.001,
+    "default_adaptation_steps": 500,
+    "default_lambda_reg": 0.001,
+    "default_kpca_gamma": 0.2,
+}
+
+gamma_args_auto = parse_tvsn_args(["--arm", "kpcada"])
+gamma_args_fixed = parse_tvsn_args(["--arm", "kpcada", "--mmd-gamma", "965.55"])
+device_args_cpu = parse_tvsn_args(
+    ["--arm", "kpcada", "--kpca-optimization-device", "cpu"]
+)
+assert gamma_args_auto.mmd_gamma is None
+assert gamma_args_fixed.mmd_gamma == 965.55
+assert gamma_args_auto.kpca_optimization_device == "auto"
+assert device_args_cpu.kpca_optimization_device == "cpu"
+assert str(kpcada.resolve_optimization_device("auto")) in {"cpu", "cuda", "mps"}
+assert resolve_effective_regularization_mode("baseline", "trace") == "none"
+assert resolve_effective_regularization_mode("kpcada", "trace") == "trace"
+assert resolve_mmd_gamma(None) == (0.5, True)
+assert resolve_mmd_gamma(965.55) == (965.55, False)
+try:
+    resolve_mmd_gamma(965.55, arm="baseline")
+except ValueError:
+    pass
+else:
+    raise AssertionError("fixed MMD gamma was accepted for the baseline arm")
+for invalid_gamma in (0.0, -1.0, float("inf"), float("nan")):
+    try:
+        resolve_mmd_gamma(invalid_gamma)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError(f"invalid MMD gamma was accepted: {invalid_gamma}")
+initial_coordinates = np.array([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]])
+integrity = target_coordinate_integrity(initial_coordinates, initial_coordinates + 0.1)
+assert integrity["finite"] and not integrity["collapsed"]
+assert not target_coordinate_integrity(initial_coordinates * 1e-8, initial_coordinates * 1e-8)["collapsed"]
+assert np.isclose(integrity["variance_retention_ratio"], 1.0)
+collapsed_integrity = target_coordinate_integrity(initial_coordinates, np.zeros_like(initial_coordinates))
+assert collapsed_integrity["collapsed"]
+nonfinite_integrity = target_coordinate_integrity(initial_coordinates, np.full_like(initial_coordinates, np.nan))
+assert not nonfinite_integrity["finite"] and nonfinite_integrity["collapsed"]
+results["lambda_candidate_coordinate_integrity"] = {
+    "variance_retention_reported": True,
+    "normalized_displacement_reported": True,
+    "near_zero_variance_rejected": True,
+    "nonfinite_coordinates_rejected": True,
+}
+original_tune_fit = kpcada.fit_transform
+def fake_candidate_fit(*, initial_embeddings, lambda_reg, **kwargs):
+    start = initial_embeddings["Z_t_initial"]
+    adapted = np.zeros_like(start) if lambda_reg == 0.0001 else start.copy()
+    mmd = 0.0 if lambda_reg == 0.0001 else 0.5
+    return {
+        "Z_s": initial_embeddings["Z_s"], "Z_t": adapted,
+        "Z_t_initial": start, "common_source_idx": np.arange(len(start)),
+        "common_target_idx": np.arange(len(start)),
+        "final_mmd": mmd, "final_regularization": 0.0,
+        "final_loss": mmd, "loss_history": [mmd],
+    }
+kpcada.fit_transform = fake_candidate_fit
+try:
+    selector_rng = np.random.default_rng(321)
+    selector_source = selector_rng.normal(size=(8, 10))
+    selector_target = selector_rng.normal(size=(8, 9))
+    selector_genes = np.array([f"g{i}" for i in range(8)])
+    selector_result = kpcada.tune_lambda(
+        selector_source, selector_target, selector_genes, selector_genes,
+        lambda_values=(0.0001, 0.1), kpca_gamma=0.2, auto_gamma=False,
+        epochs=0,
+    )
+finally:
+    kpcada.fit_transform = original_tune_fit
+assert selector_result["best_lambda_mmd"] == 0.1
+assert selector_result["rejected_candidates"] == [{
+    "lambda": 0.0001, "reason": "near-zero target-coordinate variance"
+}]
+results["lambda_selection_rejects_coordinate_collapse"] = True
+base_aggregate_method = {
+    "regularization_mode": "trace", "alignment_weight": 1.0,
+    "kpca_epochs": 500, "kpca_lr": 0.001, "kpca_gamma": 0.2,
+    "mmd_gamma_setting": None, "effective_mmd_gamma": 7.8, "lambda_reg_setting": None,
+    "lambda_grid_setting": [0.0001, 0.001, 0.01, 0.1, 1.0, 10.0],
+    "align_shared_genes": False, "anchor_shared_pixels": False,
+}
+auto_gamma_signature = adaptation_method_signature({"method_configurations": {"comparison": base_aggregate_method}})
+auto_other_seed = {**base_aggregate_method, "effective_mmd_gamma": 8.2}
+assert adaptation_method_signature({"method_configurations": {"comparison": auto_other_seed}}) == auto_gamma_signature
+fixed_gamma_method = {**base_aggregate_method, "mmd_gamma_setting": 965.55, "effective_mmd_gamma": 965.55}
+fixed_gamma_signature = adaptation_method_signature({"method_configurations": {"comparison": fixed_gamma_method}})
+assert auto_gamma_signature != fixed_gamma_signature
+cpu_device_signature = adaptation_method_signature({
+    "method_configurations": {"comparison": base_aggregate_method}
+})
+mps_device_signature = adaptation_method_signature({
+    "method_configurations": {"comparison": {
+        **base_aggregate_method, "kpca_optimization_device": "mps"
+    }}
+})
+assert cpu_device_signature != mps_device_signature
+results["aggregation_separates_mmd_bandwidths"] = True
+results["aggregation_separates_objective_devices"] = True
+results["runner_mmd_gamma_protocol"] = {
+    "automatic_default": "supplement median-distance heuristic",
+    "fixed_paper_bandwidth_accepted": 965.55,
+    "nonpositive_or_nonfinite_rejected": True,
+    "baseline_fixed_gamma_rejected": True,
+}
 
 # Paired results must not blend the historical percentile-threshold filter
 # with the deterministic rank filter. Target-private fitting can differ only
@@ -85,6 +234,32 @@ preprocess_adapted = {
 assert verify_preprocessing_policy_match(
     preprocess_baseline, preprocess_adapted
 ) == common_preprocessing_policy
+adaptation_scaled_policy = {
+    "feature_scope": "shared",
+    "config": {"shared_scaling_policy": "target_adaptation"},
+    "preprocessing_policy": {
+        **common_preprocessing_policy,
+        "shared_gene_scaler_fit_scope": "target adaptation samples only",
+        "target_private_filter_fit_scope": "not fitted",
+        "target_private_scaler_fit_scope": "not fitted",
+    },
+}
+adaptation_scaled_pair_signature = verify_preprocessing_policy_match(
+    adaptation_scaled_policy,
+    {**adaptation_scaled_policy, "arm": "kpcada"},
+)
+assert adaptation_scaled_pair_signature["shared_gene_scaler_fit_scope"] == (
+    "target adaptation samples only"
+)
+try:
+    verify_preprocessing_policy_match(
+        {**adaptation_scaled_policy, "config": {"shared_scaling_policy": "source"}},
+        adaptation_scaled_policy,
+    )
+except ValueError as error:
+    assert "disagrees with saved shared_scaling_policy" in str(error)
+else:
+    raise AssertionError("verifier accepted a scaling fit scope inconsistent with config")
 try:
     verify_preprocessing_policy_match(
         preprocess_baseline,
@@ -100,6 +275,8 @@ else:
 results["preprocessing_policy_pairing"] = {
     "rank_filter_mismatch_rejected": True,
     "shared_scope_private_fit_difference_allowed": True,
+    "adaptation_only_shared_scaling_supported": True,
+    "scaling_policy_fit_scope_mismatch_rejected": True,
 }
 try:
     verify_preprocessing_policy_match(
@@ -128,6 +305,107 @@ else:
 results["preprocessing_policy_internal_consistency"] = {
     "configuration_mismatch_rejected": True,
     "all_feature_private_fit_scope_enforced": True,
+}
+scaler_split_manifest = {
+    "source_train": np.array(["source-1", "source-2"]),
+    "target_adaptation": np.array(["target-adapt-1", "target-adapt-2"]),
+    "target_test": np.array(["target-test-1"]),
+}
+verify_representation_fit_scope(
+    {"config": {"shared_scaling_policy": "target_adaptation"}},
+    {**scaler_split_manifest,
+     "shared_scaler_fit_sample_ids": scaler_split_manifest["target_adaptation"]},
+)
+for invalid_scaler_manifest in (
+    scaler_split_manifest,
+    {**scaler_split_manifest,
+     "shared_scaler_fit_sample_ids": scaler_split_manifest["source_train"]},
+):
+    try:
+        verify_representation_fit_scope(
+            {"config": {"shared_scaling_policy": "target_adaptation"}},
+            invalid_scaler_manifest,
+        )
+    except ValueError as error:
+        assert "scaler" in str(error).lower()
+    else:
+        raise AssertionError("verifier accepted missing or incorrect adaptation scaler IDs")
+results["shared_scaler_fit_manifest"] = {
+    "adaptation_only_fit_ids_accepted": True,
+    "missing_or_source_fit_ids_rejected_for_adaptation_policy": True,
+}
+grid_split_manifest = {
+    **scaler_split_manifest,
+    "shared_scaler_fit_sample_ids": scaler_split_manifest["target_adaptation"],
+}
+assert np.array_equal(
+    verify_scaler_fit_ids(grid_split_manifest, "target_adaptation", "fixture"),
+    scaler_split_manifest["target_adaptation"],
+)
+for invalid_grid_manifest, invalid_policy in (
+    ({key: value for key, value in grid_split_manifest.items()
+      if key != "shared_scaler_fit_sample_ids"}, "target_adaptation"),
+    ({**grid_split_manifest,
+      "shared_scaler_fit_sample_ids": scaler_split_manifest["source_train"]},
+     "target_adaptation"),
+):
+    try:
+        verify_scaler_fit_ids(invalid_grid_manifest, invalid_policy, "fixture")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("withheld grid accepted invalid scaler-fit provenance")
+results["withheld_grid_scaler_manifest"] = {
+    "adaptation_ids_accepted": True,
+    "missing_or_source_ids_rejected": True,
+}
+grid_common_config = {
+    "arm": "baseline",
+    "shared_scaling_policy": "source",
+    "seed": 55,
+    "model": "resnet50d",
+    "classifier_lr": 1e-4,
+    "results_root": "results/one",
+}
+verify_matched_grid_configs(
+    grid_common_config,
+    {**grid_common_config, "arm": "kpcada",
+     "shared_scaling_policy": "target_adaptation",
+     "results_root": "results/two"},
+    allowed_differences={"arm", "shared_scaling_policy"},
+    reference_name="baseline", candidate_name="kpcada",
+)
+assert declared_config_differences({
+    "runs": [
+        {"options": {"--shared-scaling-policy": "source"}},
+        {"options": {"--shared-scaling-policy": "target_adaptation"}},
+    ],
+}) == {"arm", "shared_scaling_policy"}
+try:
+    verify_matched_grid_configs(
+        grid_common_config,
+        {**grid_common_config, "model": "resnet50"},
+        allowed_differences={"arm", "shared_scaling_policy"},
+        reference_name="baseline", candidate_name="mismatched",
+    )
+except ValueError as error:
+    assert "model" in str(error)
+else:
+    raise AssertionError("withheld grid accepted an undeclared classifier mismatch")
+results["withheld_grid_matched_configuration"] = {
+    "declared_variants_accepted": True,
+    "undeclared_model_difference_rejected": True,
+}
+with tempfile.TemporaryDirectory() as temp_dir:
+    spec_file = Path(temp_dir) / "grid.json"
+    original_spec_bytes = b'{"name":"frozen","seed":55}\n'
+    spec_file.write_bytes(original_spec_bytes)
+    frozen_spec, frozen_digest = load_frozen_spec(spec_file)
+    spec_file.write_text('{"name":"edited-after-launch","seed":56}\n')
+    assert frozen_spec["name"] == "frozen" and frozen_spec["seed"] == 55
+    assert frozen_digest == hashlib.sha256(original_spec_bytes).hexdigest()
+results["withheld_grid_spec_snapshot"] = {
+    "loaded_spec_and_digest_remain_bound_to_same_bytes": True,
 }
 fingerprinted_run = {
     "python_source_tree_sha256": "source-fingerprint",
@@ -168,6 +446,46 @@ results["explicit_patient_mapping"] = {
     "unmapped_sample_rejected": True,
 }
 
+# The article's reported 158 mRNA tumors match the count of unique GEO tumor
+# patient IDs, not the number of public tumor profiles. Preserve that distinction
+# and ensure all profiles from either repeated patient stay in one split group.
+geo_manifest = json.loads(
+    (ROOT / "audit/gse45498_tvsn_rebuild_manifest.json").read_text(encoding="utf-8")
+)
+tumor_reconciliation = geo_manifest["tumor_profile_patient_reconciliation"]
+assert tumor_reconciliation["tumor_profile_count"] == 160
+assert tumor_reconciliation["unique_tumor_patient_count"] == 158
+assert tumor_reconciliation["additional_profiles_beyond_one_per_patient"] == 2
+repeated = tumor_reconciliation["repeated_tumor_profiles"]
+assert [group["patient_id"] for group in repeated] == ["101", "91"]
+for group in repeated:
+    sample_ids = [f"GSE45498:{group['patient_id']}:{sample['gsm']}"
+                  for sample in group["samples"]]
+    mapped_groups = patient_group_ids(sample_ids)
+    assert len(set(mapped_groups.tolist())) == 1
+all_samples = geo_manifest["samples"]
+all_ids = [
+    f"GSE45498:{sample['patient_id']}:{sample['gsm']}" for sample in all_samples
+]
+all_groups = patient_group_ids(all_ids)
+labels_by_group = {}
+for group_id, sample in zip(all_groups.tolist(), all_samples):
+    labels_by_group.setdefault(group_id, set()).add(sample["label"])
+paired_patient_groups = [
+    group_id for group_id, labels in labels_by_group.items()
+    if labels == {"Normal", "Tumor"}
+]
+assert len(all_samples) == 200
+assert len(labels_by_group) == 158
+assert len(paired_patient_groups) == 40
+results["geo_profile_patient_reconciliation"] = {
+    "160_tumor_profiles_from_158_patients": True,
+    "repeated_patient_ids": [group["patient_id"] for group in repeated],
+    "all_repeated_profiles_share_patient_split_group": True,
+    "40_matched_normal_tumor_patient_groups_stay_together": True,
+    "paper_counting_unit_remains_unconfirmed": True,
+}
+
 # D1: Preserve the original audit counterexample while checking the corrected
 # implementation against full empirical MMD².
 s = torch.zeros((1, 2))
@@ -188,6 +506,46 @@ assert legacy_loss(s, t0) > legacy_loss(s, t1)
 assert np.isclose(kpcada.mmd_loss(s, t0).item(), full_mmd(s, t0))
 assert np.isclose(kpcada.mmd_loss(s, t1).item(), full_mmd(s, t1))
 
+# Caching fixed kernel terms in the optimization loop must preserve both the
+# objective value and its coordinate gradients.
+cache_source = torch.tensor([[-0.4, 0.2], [0.8, -0.1], [0.3, 1.1]])
+cache_target = torch.tensor([[0.2, 0.6], [-0.2, 0.5], [1.0, -0.7]])
+cache_gamma = 0.7
+cache_source_mean = kpcada.rbf_kernel(
+    cache_source, cache_source, cache_gamma
+).mean().detach()
+target_direct = cache_target.clone().requires_grad_(True)
+target_cached = cache_target.clone().requires_grad_(True)
+loss_direct = kpcada.mmd_loss(cache_source, target_direct, gamma=cache_gamma)
+loss_cached = kpcada.mmd_loss(
+    cache_source, target_cached, gamma=cache_gamma,
+    source_kernel_mean=cache_source_mean,
+)
+grad_direct, = torch.autograd.grad(loss_direct, target_direct)
+grad_cached, = torch.autograd.grad(loss_cached, target_cached)
+assert torch.allclose(loss_direct, loss_cached, rtol=1e-7, atol=1e-8)
+assert torch.allclose(grad_direct, grad_cached, rtol=1e-6, atol=1e-7)
+
+cache_x_target = torch.tensor([[0., 1., 3.], [2., 0., 1.]])
+cache_z_direct = torch.tensor([[0.4, -0.2], [-0.7, 0.6], [0.3, 1.2]],
+                              requires_grad=True)
+cache_z_cached = cache_z_direct.detach().clone().requires_grad_(True)
+cache_kernel = kpcada.rbf_kernel(
+    cache_x_target.T, cache_x_target.T, cache_gamma
+).detach()
+reg_direct = kpcada.regularization_term(
+    cache_z_direct, cache_x_target, gamma=cache_gamma
+)
+reg_cached = kpcada.regularization_term_from_kernel(cache_z_cached, cache_kernel)
+reg_grad_direct, = torch.autograd.grad(reg_direct, cache_z_direct)
+reg_grad_cached, = torch.autograd.grad(reg_cached, cache_z_cached)
+assert torch.allclose(reg_direct, reg_cached, rtol=1e-7, atol=1e-8)
+assert torch.allclose(reg_grad_direct, reg_grad_cached, rtol=1e-6, atol=1e-7)
+results["fixed_kernel_cache_equivalence"] = {
+    "mmd_value_and_gradient_match_uncached": True,
+    "trace_value_and_gradient_match_uncached": True,
+}
+
 # D2: Minimize the actual regularizer alone for a fixed target kernel.
 z = torch.tensor([[-1., 0.], [1., 0.]], requires_grad=True)
 x = torch.tensor([[0., 10.]])  # regularization_term transposes this to gene rows
@@ -206,6 +564,14 @@ pkg = types.ModuleType("pyDeepInsightv3")
 pkg.__path__ = [str(ROOT / "Scripts" / "pyDeepInsightv3")]
 sys.modules["pyDeepInsightv3"] = pkg
 DA = importlib.import_module("pyDeepInsightv3.image_transformer_new").DomainAdaptiveImageTransformer
+default_mapper = DA()
+assert default_mapper.pixels == (227, 227)
+assert default_mapper._kpca_da.kpca_gamma == 0.2
+assert default_mapper._kpca_da.lambda_reg == 0.001
+assert default_mapper._kpca_da.lr == 0.001
+assert default_mapper._kpca_da.epochs == 500
+assert default_mapper._kpca_da.regularization_mode == "trace"
+results["image_transformer_defaults_match_core_api"] = True
 p = np.array([[0., 0.], [2., 0.], [4., 0.]])
 t = np.array([[1., 0.], [2., 0.], [5., 2.]])
 mapper = DA(kpca_da_params={"epochs": 1}, pixels=(31, 31))
@@ -248,6 +614,35 @@ results["transform_api"] = {"matches_unadapted_kpca": bool(np.allclose(via_api, 
 assert results["transform_api"]["max_difference_from_optimized_target"] > 1e-6
 assert results["transform_api"]["explicit_target_gene_projection_matches"]
 
+if torch.backends.mps.is_available():
+    cpu_fit = kpcada.fit_transform(
+        xs, xt, genes, genes, kpca_gamma=.2, mmd_gamma=.5,
+        auto_gamma=False, lambda_reg=.1, lr=.01, epochs=5,
+        optimization_device="cpu",
+    )
+    mps_fit = kpcada.fit_transform(
+        xs, xt, genes, genes, kpca_gamma=.2, mmd_gamma=.5,
+        auto_gamma=False, lambda_reg=.1, lr=.01, epochs=5,
+        optimization_device="mps",
+    )
+    max_coordinate_difference = float(np.max(np.abs(cpu_fit["Z_t"] - mps_fit["Z_t"])))
+    assert np.allclose(cpu_fit["Z_t"], mps_fit["Z_t"], rtol=1e-5, atol=1e-6)
+    assert np.isclose(cpu_fit["final_loss"], mps_fit["final_loss"], rtol=1e-5, atol=1e-7)
+    assert np.allclose(cpu_fit["loss_history"], mps_fit["loss_history"],
+                       rtol=1e-5, atol=1e-7)
+    assert mps_fit["optimization_device"] == "mps"
+    results["accelerator_objective_equivalence"] = {
+        "cpu_and_mps_final_coordinates_match": True,
+        "cpu_and_mps_final_objective_match": True,
+        "cpu_and_mps_loss_history_match": True,
+        "maximum_coordinate_absolute_difference": max_coordinate_difference,
+    }
+else:
+    results["accelerator_objective_equivalence"] = {
+        "accelerator_available": False,
+        "cpu_fallback_used": True,
+    }
+
 # D6: KPCA score convention differs from the displayed paper equations 7-8.
 kp = KernelPCA(n_components=2, kernel="rbf", gamma=.2)
 z = kp.fit_transform(xs)
@@ -258,7 +653,8 @@ results["kpca_equation"] = {
 
 # D7: Single-endpoint accounting versus tune_lambda's mixed endpoints.
 summary = kpcada.tune_lambda(xs, xt, genes, genes, lambda_values=[.1, .2],
-    kpca_gamma=.2, auto_gamma=False, mmd_gamma=.5, lr=.01, epochs=5)
+    kpca_gamma=.2, auto_gamma=False, mmd_gamma=.5, lr=.01, epochs=5,
+    regularization_mode="reference")
 record = summary["results"][0]
 recomputed_loss = record["final_mmd"] + .1 * record["final_regularization"]
 candidate_fits = summary["_fit_results_by_lambda"]
@@ -340,6 +736,37 @@ results["independent_kpca_estimators"] = {
 }
 assert results["independent_kpca_estimators"][
     "target_transform_is_unadapted_and_separate_from_optimized_coordinates"]
+
+if torch.backends.mps.is_available():
+    cache_invalidation_model = kpcada.KPCA_DA(
+        kpca_gamma=.2, auto_gamma=False, mmd_gamma=.5, lambda_reg=.1,
+        lr=.01, epochs=2, kpca_random_state=17, optimization_device="cpu",
+    )
+    cache_invalidation_model.tune_lambda(
+        xs, xt, genes, genes, lambda_values=[.1]
+    )
+    cache_invalidation_model.optimization_device = "mps"
+    cache_invalidation_model.fit_transform(xs, xt, genes, genes)
+    assert cache_invalidation_model.optimization_device_ == "mps"
+    results["tuned_cache_invalidated_on_device_change"] = True
+
+assert verify_optimization_device_match(
+    {"kpca_optimization_device": "mps"},
+    {"kpca_optimization_device": "mps"},
+) == "mps"
+try:
+    verify_optimization_device_match(
+        {"kpca_optimization_device": "cpu"},
+        {"kpca_optimization_device": "mps"},
+    )
+except ValueError as error:
+    assert "different effective" in str(error)
+else:
+    raise AssertionError("paired-run verifier accepted mixed objective devices")
+results["paired_objective_device_contract"] = {
+    "same_effective_device_accepted": True,
+    "different_effective_devices_rejected": True,
+}
 
 # Read CSV metadata using exactly the notebooks' gene-row/last-label-row layout.
 files = ["TvsN/TCGA_BRCA_NvT.csv", "TvsN/GSE45498_NvT.csv",
@@ -471,6 +898,8 @@ assert tie_filter.source_keep_.sum() == 7
 assert tie_filter.source_keep_[:2].tolist() == [False, False]
 assert tie_filter.source_keep_[2:6].tolist() == [False, True, True, True]
 assert not tie_filter.source_keep_[tie_variances == 0.].any()
+combat_rank_filter = rank_variance_keep_mask(tie_matrix, 30)
+assert np.array_equal(combat_rank_filter, tie_filter.source_keep_)
 tie_filter_shared = GeneAwareMinMax(variance_percentile=30).fit_source_shared(
     tie_matrix, tie_genes, tie_genes
 )
@@ -481,6 +910,79 @@ results["deterministic_variance_filter"] = {
     "retained_features": int(tie_filter.source_keep_.sum()),
     "constant_features_removed": int((~tie_filter.source_keep_[:2]).sum()),
     "tie_break": "stable input order",
+    "combat_uses_same_filter": True,
+}
+adapt_source = np.array([
+    [0., 0., 0., 0.],
+    [.001, 10., 20., 1.],
+    [.0005, 5., 10., 2.],
+])
+adapt_target = np.array([[200., 5., 100.], [400., 7., 200.],
+                         [300., 6., 150.]])
+adapt_source_genes = np.array([
+    "source-low", "shared-a", "shared-b", "source-only"
+])
+adapt_target_genes = np.array(["shared-b", "target-only", "shared-a"])
+adaptation_scaler = GeneAwareMinMax(
+    variance_percentile=25, shared_scaling_policy="target_adaptation"
+).fit(adapt_source, adapt_source_genes, adapt_target, adapt_target_genes)
+adapt_target_scaled = adaptation_scaler.transform_target(
+    adapt_target, adapt_target_genes
+)
+adapt_source_scaled = adaptation_scaler.transform_source(
+    adapt_source, adapt_source_genes
+)
+assert np.allclose(adapt_target_scaled[:, [0, 2]], [[0., 0.], [1., 1.], [.5, .5]])
+assert np.allclose(
+    adapt_source_scaled[:, [0, 1]],
+    [[-1., -1.], [-.9, -.9], [-.95, -.95]],
+)
+assert not adaptation_scaler.source_keep_[0]
+assert np.all(adapt_source_scaled[:, 2] >= 0.)
+assert np.allclose(
+    adaptation_scaler.transform_target_by_gene_id(
+        adapt_target[:, ::-1], adapt_target_genes[::-1]
+    ),
+    adapt_target_scaled,
+)
+assert adaptation_scaler.shared_scaler_.data_min_.tolist() == [200., 100.]
+legacy_source_policy = GeneAwareMinMax(
+    variance_percentile=0, shared_scaling_policy="source"
+).fit(X_source, source_gene_ids, X_target, target_gene_ids)
+legacy_expected_source = legacy_source_policy.transform_source(X_source, source_gene_ids)
+legacy_expected_target = legacy_source_policy.transform_target(X_target, target_gene_ids)
+# Older saved fitted objects predate the shared-scaler state and its index arrays.
+for legacy_attribute in (
+    "shared_scaler_", "_source_shared_scaler_indices",
+    "_target_shared_scaler_indices", "_source_shared_output_indices",
+    "shared_scaling_policy",
+):
+    delattr(legacy_source_policy, legacy_attribute)
+assert np.allclose(
+    legacy_source_policy.transform_source(X_source, source_gene_ids),
+    legacy_expected_source,
+)
+assert np.allclose(
+    legacy_source_policy.transform_target(X_target, target_gene_ids),
+    legacy_expected_target,
+)
+results["legacy_preprocessor_pickle_compatibility"] = {
+    "pre_shared_scaling_source_transform_matches": True,
+    "pre_shared_scaling_target_transform_matches": True,
+}
+try:
+    GeneAwareMinMax(
+        variance_percentile=0, shared_scaling_policy="target_adaptation"
+    ).fit_source_shared(adapt_source, adapt_source_genes, adapt_target_genes)
+except ValueError as error:
+    assert "cannot use target-adaptation scaling" in str(error)
+else:
+    raise AssertionError("inductive raw DeepInsight path accepted adaptation-fitted scaling")
+results["adaptation_fitted_shared_scaling"] = {
+    "adaptation_values_map_to_unit_interval": True,
+    "same_scaler_applied_to_source_and_target": True,
+    "gene_order_invariant": True,
+    "inductive_raw_deepinsight_rejects_transductive_policy": True,
 }
 clipped_preprocessor = GeneAwareMinMax(
     variance_percentile=0, clip_scaled_values=True
@@ -611,11 +1113,78 @@ results["new_protocol_helpers"] = {
     "binary_sensitivity": metrics["sensitivity"],
     "binary_specificity": metrics["specificity"],
 }
+with tempfile.TemporaryDirectory(prefix="input-fingerprint-") as fingerprint_tmp:
+    fingerprint_path = Path(fingerprint_tmp) / "target.csv"
+    fingerprint_path.write_text("sample data\n", encoding="utf-8")
+    expected_fingerprint = hashlib.sha256(fingerprint_path.read_bytes()).hexdigest()
+    verify_input_fingerprint(fingerprint_path, expected_fingerprint, "Target")
+    fingerprint_path.write_text("changed sample data\n", encoding="utf-8")
+    try:
+        verify_input_fingerprint(fingerprint_path, expected_fingerprint, "Target")
+    except RuntimeError as error:
+        assert "changed during the run" in str(error)
+    else:
+        raise AssertionError("Input fingerprint guard accepted a changed cohort file")
+results["input_fingerprint_guard"] = {
+    "unchanged_input_accepted": True,
+    "changed_input_rejected": True,
+}
 threshold = select_binary_threshold(
     [0, 0, 1, 1], [.1, .4, .6, .9], positive_label=1, negative_label=0
 )
 assert threshold == {"threshold": .5, "source_validation_balanced_accuracy": 1.0}
 results["source_validation_threshold_selection"] = threshold
+
+# Frozen-feature training must update only the classifier head and must not
+# update pretrained BatchNorm running statistics.
+class _TinyTimmLikeClassifier(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.backbone = torch.nn.Sequential(
+            torch.nn.Linear(4, 3), torch.nn.BatchNorm1d(3), torch.nn.ReLU()
+        )
+        self.head = torch.nn.Linear(3, 2)
+
+    def get_classifier(self):
+        return self.head
+
+    def forward(self, inputs):
+        return self.head(self.backbone(inputs))
+
+frozen_classifier = _TinyTimmLikeClassifier()
+freeze_policy = configure_trainable_parameters(frozen_classifier, freeze_backbone=True)
+assert freeze_policy["freeze_backbone"] is True
+assert freeze_policy["frozen_parameter_count"] > 0
+assert all(parameter.requires_grad for parameter in frozen_classifier.head.parameters())
+assert all(not parameter.requires_grad for parameter in frozen_classifier.backbone.parameters())
+batchnorm = frozen_classifier.backbone[1]
+running_mean_before = batchnorm.running_mean.clone()
+train_inputs = torch.arange(64, dtype=torch.float32).reshape(16, 4) / 10.0
+train_labels = torch.tensor([0, 1] * 8, dtype=torch.long)
+loader = torch.utils.data.DataLoader(
+    torch.utils.data.TensorDataset(train_inputs, train_labels), batch_size=4
+)
+optimizer = torch.optim.SGD(
+    (parameter for parameter in frozen_classifier.parameters() if parameter.requires_grad),
+    lr=0.01,
+)
+fit_with_validation(
+    frozen_classifier, loader, loader, torch.nn.CrossEntropyLoss(), optimizer,
+    max_epochs=2, patience=2, freeze_batchnorm_stats=True,
+)
+assert torch.equal(batchnorm.running_mean, running_mean_before)
+results["frozen_backbone_training"] = {
+    "only_classifier_head_trainable": True,
+    "batchnorm_running_statistics_unchanged": True,
+    "exposed_as_explicit_ablation": True,
+}
+assert "freeze_backbone" in MATCHED_CONFIG_KEYS
+assert config_value({}, "freeze_backbone") is False
+assert config_value({"freeze_backbone": True}, "freeze_backbone") is True
+results["frozen_backbone_pairing"] = {
+    "default_policy_is_full_finetuning": True,
+    "freeze_setting_in_matched_pair_contract": True,
+}
 
 # Source-fitted ICA distance summaries must use the supplied unshifted arrays,
 # return zero for identical distributions, and identify marginal metrics.
@@ -826,6 +1395,32 @@ constant_cam_rank = rank_gene_attributions(
     np.ones((2, 2)), np.array(["gene-A"]), np.array([[0, 0]]), threshold=0.5,
 )
 assert constant_cam_rank == []
+with tempfile.TemporaryDirectory() as mapping_tmp:
+    attribution_map_path = Path(mapping_tmp) / "patient_map.json"
+    attribution_map_path.write_text(json.dumps({"s1": "p1", "s2": "p2"}))
+    attribution_map_hash = hashlib.sha256(attribution_map_path.read_bytes()).hexdigest()
+    attribution_metadata = {"patient_mapping": {"source": {
+        "source": "explicit sample-to-patient map",
+        "mapping_file": str(attribution_map_path),
+        "mapping_file_sha256": attribution_map_hash,
+    }}}
+    verify_attribution_patient_ids(
+        attribution_metadata, "source", np.array(["s1", "s2"]),
+        np.array(["patient:p1", "patient:p2"]),
+    )
+    try:
+        verify_attribution_patient_ids(
+            attribution_metadata, "source", np.array(["s1", "s2"]),
+            np.array(["patient:p2", "patient:p1"]),
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("Attribution accepted mismatched patient IDs")
+results["attribution_patient_map_provenance"] = {
+    "explicit_map_hash_checked": True,
+    "saved_sample_patient_alignment_checked": True,
+}
 results["gene_cam_mapping"] = {
     "uses_ordered_gene_coordinates": True,
     "stable_ranking": [row["gene_id"] for row in gene_rank],
@@ -915,10 +1510,49 @@ assert combat_result.fit_metadata["target_labels_used"] is False
 assert all(np.isfinite(matrix).all() for matrix in (
     combat_result.source_train, combat_result.source_validation,
     combat_result.target_adaptation, combat_result.target_test))
+combat_estimates = combat_result.estimates
+target_batch_index = int(np.flatnonzero(
+    np.asarray(combat_estimates["batches"], dtype=str) == "target"
+)[0])
+pooled_variance = np.asarray(combat_estimates["var.pooled"], dtype=float).reshape(-1)
+standard_mean = (
+    np.asarray(combat_estimates["stand.mean"], dtype=float)[:, 0]
+    + np.asarray(combat_estimates["mod.mean"], dtype=float).mean(axis=1)
+)
+gamma_star = np.asarray(
+    combat_estimates["gamma.star"], dtype=float
+)[target_batch_index].reshape(-1)
+delta_star = np.asarray(
+    combat_estimates["delta.star"], dtype=float
+)[target_batch_index].reshape(-1)
+target_test_in_common_order = combat_target_test
+expected_target_test = (
+    ((target_test_in_common_order - standard_mean) / np.sqrt(pooled_variance)
+     - gamma_star)
+    / np.sqrt(delta_star)
+    * np.sqrt(pooled_variance)
+    + standard_mean
+)
+assert np.allclose(combat_result.target_test, expected_target_test, rtol=1e-10, atol=1e-10)
+with redirect_stdout(StringIO()):
+    changed_heldout = fit_apply_combat_partitions(
+        combat_source_train, combat_source_validation + 1000.0,
+        combat_target_adaptation[:, combat_target_order],
+        combat_target_test[:, combat_target_order] - 1000.0,
+        combat_genes_source, combat_genes_target,
+    )
+assert np.allclose(combat_result.estimates["gamma.star"],
+                    changed_heldout.estimates["gamma.star"])
+assert np.allclose(combat_result.estimates["delta.star"],
+                    changed_heldout.estimates["delta.star"])
+assert np.allclose(combat_result.source_train, changed_heldout.source_train)
+assert np.allclose(combat_result.target_adaptation, changed_heldout.target_adaptation)
 results["combat_train_adapt_only"] = {
     "ordered_shared_genes": True,
     "validation_and_test_excluded_from_fit": True,
     "heldout_target_uses_target_batch": True,
+    "heldout_target_matches_neurocombat_from_training_equation": True,
+    "extreme_heldout_values_do_not_change_fitted_estimates": True,
     "target_labels_unused": True,
 }
 
@@ -941,16 +1575,39 @@ if official_target.is_file():
     X_target_labeled, genes_labeled, ids_labeled, labels_labeled = (
         kpcada.load_expression_dataset(str(official_target))
     )
-    X_target_unlabeled, genes_unlabeled, ids_unlabeled, labels_unlabeled = (
-        kpcada.load_expression_dataset(str(official_target), include_labels=False)
-    )
+    original_read_csv = kpcada.pd.read_csv
+    unlabeled_read_options = {}
+    def record_unlabeled_csv_options(*args, **kwargs):
+        unlabeled_read_options.update(kwargs)
+        return original_read_csv(*args, **kwargs)
+    kpcada.pd.read_csv = record_unlabeled_csv_options
+    try:
+        X_target_unlabeled, genes_unlabeled, ids_unlabeled, labels_unlabeled = (
+            kpcada.load_expression_dataset(
+                str(official_target), include_labels=False
+            )
+        )
+    finally:
+        kpcada.pd.read_csv = original_read_csv
     assert labels_labeled is not None and labels_unlabeled is None
+    assert unlabeled_read_options.get("skipfooter") == 1
     assert np.array_equal(X_target_labeled, X_target_unlabeled)
     assert np.array_equal(genes_labeled, genes_unlabeled)
     assert np.array_equal(ids_labeled, ids_unlabeled)
+    original_read_csv_for_labels = kpcada.pd.read_csv
+    def reject_full_matrix_read(*args, **kwargs):
+        raise AssertionError("load_labels must not reload the expression matrix")
+    kpcada.pd.read_csv = reject_full_matrix_read
+    try:
+        streamed_labels = kpcada.load_labels(str(official_target))
+    finally:
+        kpcada.pd.read_csv = original_read_csv_for_labels
+    assert np.array_equal(streamed_labels.astype(str), labels_labeled.astype(str))
     results["target_label_withholding"] = {
         "unlabeled_loader_returns_no_label_array": labels_unlabeled is None,
+        "label_row_skipped_by_csv_parser": True,
         "expression_and_sample_ids_unchanged": True,
+        "final_scoring_reads_labels_without_reloading_expression_matrix": True,
     }
     # The explicit post-freeze scorer must check the cohort hash and frozen
     # test IDs, and may write the held-out score artifact only once.
@@ -1029,6 +1686,42 @@ if found_spatial_augmentations:
 results["gene_image_spatial_augmentation"] = {
     "forbidden_transforms_absent": True,
     "runners_checked": ["run_tvsn_experiment.py", "run_combat_tvsn_experiment.py"],
+}
+for runner_filename in ("run_tvsn_experiment.py", "run_combat_tvsn_experiment.py"):
+    runner_path = ROOT / "Scripts" / runner_filename
+    runner_tree = ast.parse(runner_path.read_text(), filename=str(runner_path))
+    unlabeled_target_load_lines = [
+        node.lineno for node in ast.walk(runner_tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "load_expression_dataset"
+        and any(keyword.arg == "include_labels"
+                and isinstance(keyword.value, ast.Constant)
+                and keyword.value.value is False
+                for keyword in node.keywords)
+    ]
+    target_label_load_lines = [
+        node.lineno for node in ast.walk(runner_tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "load_labels"
+    ]
+    target_prediction_context_lines = [
+        node.lineno for node in ast.walk(runner_tree)
+        if isinstance(node, ast.With)
+        and any(isinstance(item.context_expr, ast.Call)
+                and isinstance(item.context_expr.func, ast.Attribute)
+                and item.context_expr.func.attr == "no_grad"
+                for item in node.items)
+    ]
+    assert len(unlabeled_target_load_lines) == 1, runner_filename
+    assert len(target_label_load_lines) == 1, runner_filename
+    assert target_prediction_context_lines, runner_filename
+    assert target_label_load_lines[0] > max(target_prediction_context_lines), runner_filename
+results["runner_target_label_withholding"] = {
+    "runners": ["run_tvsn_experiment.py", "run_combat_tvsn_experiment.py"],
+    "parser_skips_target_label_row_during_fit_and_prediction": True,
+    "labels_loaded_only_after_prediction_for_final_scoring": True,
 }
 nb_count = 0
 archived_notebooks = {

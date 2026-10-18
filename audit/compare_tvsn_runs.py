@@ -30,20 +30,27 @@ SPLIT_ARRAYS = (
 )
 MATCHED_CONFIG_KEYS = (
     "source_validation_size", "target_test_size", "variance_percentile",
+    "shared_scaling_policy",
     "feature_scope", "image_size", "model", "classifier_epochs",
     "early_stopping_patience", "scheduler_patience", "classifier_lr",
-    "weight_decay", "batch_size", "no_pretrained",
+    "weight_decay", "batch_size", "no_pretrained", "freeze_backbone",
     "source_validation_threshold", "clip_scaled_values",
     "align_shared_genes", "anchor_shared_pixels",
-    "class_weighted_loss",
+    "class_weighted_loss", "kpca_optimization_device",
 )
 CONFIG_DEFAULTS = {
     "feature_scope": "all",
+    # Existing artifacts predate an explicit policy option and used the
+    # source-training-fitted scaler for shared genes.
+    "shared_scaling_policy": "source",
     "source_validation_threshold": False,
     "clip_scaled_values": False,
     "align_shared_genes": False,
     "anchor_shared_pixels": False,
     "class_weighted_loss": False,
+    "freeze_backbone": False,
+    # Before accelerators were exposed, the coordinate optimizer always ran on CPU.
+    "kpca_optimization_device": "cpu",
 }
 
 
@@ -134,8 +141,22 @@ def verify_preprocessing_policy_match(
             raise ValueError("Run clipping policy differs from its saved configuration")
         if policy["source_filter_fit_scope"] != "source training samples only":
             raise ValueError("Source variance filter must be fit on source training samples only")
-        if policy["shared_gene_scaler_fit_scope"] != "source training samples only":
-            raise ValueError("Shared-gene scaling must be fit on source training samples only")
+        policy_name = str(config_value(config, "shared_scaling_policy"))
+        allowed_scaling_scopes = {
+            "source": "source training samples only",
+            "target_adaptation": "target adaptation samples only",
+        }
+        if policy_name not in allowed_scaling_scopes:
+            raise ValueError(
+                "Unknown shared_scaling_policy; expected 'source' or "
+                "'target_adaptation'"
+            )
+        expected_scaling_scope = allowed_scaling_scopes[policy_name]
+        if policy["shared_gene_scaler_fit_scope"] != expected_scaling_scope:
+            raise ValueError(
+                "Shared-gene scaler fit scope disagrees with saved "
+                f"shared_scaling_policy={policy_name!r}"
+            )
 
     if baseline_policy != adapted_policy:
         raise ValueError("Paired runs differ in preprocessing policy")
@@ -192,6 +213,21 @@ def verify_code_environment_match(
     }
 
 
+def verify_optimization_device_match(
+    baseline: dict[str, Any], adapted: dict[str, Any]
+) -> str | None:
+    """Reject a paired comparison if its KPCA objective used different devices."""
+    devices = {
+        value for value in (
+            baseline.get("kpca_optimization_device"),
+            adapted.get("kpca_optimization_device"),
+        ) if value is not None
+    }
+    if len(devices) > 1:
+        raise ValueError("Paired runs used different effective KPCA optimization devices")
+    return next(iter(devices), None)
+
+
 def load_run(path: Path) -> tuple[dict[str, Any], dict[str, np.ndarray]]:
     metrics_path = path / "metrics.json"
     metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
@@ -231,7 +267,27 @@ def verify_partition_disjointness(splits: dict[str, np.ndarray]) -> None:
 
 def verify_representation_fit_scope(metrics: dict[str, Any],
                                    splits: dict[str, np.ndarray]) -> None:
-    """Check saved feature-map fit IDs against the declared protocol."""
+    """Check saved feature-map and shared-scaler fit IDs against the protocol."""
+    scaling_policy = str(config_value(metrics.get("config", {}), "shared_scaling_policy"))
+    expected_scaler_fit_key = {
+        "source": "source_train",
+        "target_adaptation": "target_adaptation",
+    }.get(scaling_policy)
+    if expected_scaler_fit_key is None:
+        raise ValueError(f"Unknown shared scaling policy {scaling_policy!r}")
+    scaler_fit_ids = splits.get("shared_scaler_fit_sample_ids")
+    if scaler_fit_ids is None:
+        if scaling_policy == "target_adaptation":
+            raise ValueError(
+                "Target-adaptation scaling requires explicit shared_scaler_fit_sample_ids "
+                "in the split manifest"
+            )
+    elif not np.array_equal(scaler_fit_ids, splits[expected_scaler_fit_key]):
+        raise ValueError(
+            "Shared-gene scaler fit IDs do not match the declared "
+            f"{scaling_policy!r} split"
+        )
+
     policy = metrics.get("representation_fit_policy")
     if policy is None:
         return  # Legacy verified pairs predate explicit feature-map manifests.
@@ -257,6 +313,7 @@ def verify_representation_fit_scope(metrics: dict[str, Any],
         raise ValueError("Target-test values must not fit the feature map")
     if np.intersect1d(target_fit, splits["target_test"]).size:
         raise ValueError("Target-test samples appear in feature-map fitting IDs")
+
 
 
 def patient_cluster_bootstrap(
@@ -333,6 +390,7 @@ def main() -> int:
         if (config_value(baseline.get("config", {}), key)
                 != config_value(adapted.get("config", {}), key)):
             raise ValueError(f"Paired runs differ in matched setting {key}")
+    verify_optimization_device_match(baseline, adapted)
     preprocessing_signature = verify_preprocessing_policy_match(baseline, adapted)
     for name in SPLIT_ARRAYS:
         if not np.array_equal(split_b[name], split_a[name]):
@@ -402,14 +460,17 @@ def main() -> int:
         "method_configurations": {
             "baseline": {
                 "arm": baseline.get("arm"),
-                "regularization_mode": baseline.get("config", {}).get("regularization_mode"),
+                "regularization_mode": baseline.get("regularization_mode"),
+                "regularization_mode_setting": baseline.get("config", {}).get("regularization_mode"),
                 "selected_lambda_reg": baseline.get("selected_lambda_reg"),
                 "alignment_weight": baseline.get("alignment_weight"),
                 "effective_mmd_gamma": baseline.get("effective_mmd_gamma"),
+                "kpca_optimization_device": baseline.get("kpca_optimization_device"),
             },
             "comparison": {
                 "arm": adapted.get("arm"),
                 "regularization_mode": adapted.get("config", {}).get("regularization_mode"),
+                "regularization_mode_effective": adapted.get("regularization_mode"),
                 "kpca_epochs": adapted.get("config", {}).get("kpca_epochs"),
                 "kpca_lr": adapted.get("config", {}).get("kpca_lr"),
                 "kpca_gamma": adapted.get("config", {}).get("kpca_gamma"),
@@ -420,7 +481,9 @@ def main() -> int:
                 "alignment_weight_provenance": alignment_weight_provenance,
                 "align_shared_genes": adapted.get("config", {}).get("align_shared_genes", False),
                 "anchor_shared_pixels": adapted.get("config", {}).get("anchor_shared_pixels", False),
+                "mmd_gamma_setting": adapted.get("config", {}).get("mmd_gamma"),
                 "effective_mmd_gamma": adapted.get("effective_mmd_gamma"),
+                "kpca_optimization_device": adapted.get("kpca_optimization_device"),
             },
         },
         "baseline": {

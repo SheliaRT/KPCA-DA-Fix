@@ -16,6 +16,42 @@
     "Tumor": 160
   },
   "unique_patient_count": 158,
+  "tumor_profile_patient_reconciliation": {
+    "tumor_profile_count": 160,
+    "unique_tumor_patient_count": 158,
+    "additional_profiles_beyond_one_per_patient": 2,
+    "repeated_tumor_profiles": [
+      {
+        "patient_id": "101",
+        "profile_count": 2,
+        "samples": [
+          {
+            "gsm": "GSM1039021",
+            "series_title": "101T A3_mRNA"
+          },
+          {
+            "gsm": "GSM1039022",
+            "series_title": "101T B5_mRNA"
+          }
+        ]
+      },
+      {
+        "patient_id": "91",
+        "profile_count": 2,
+        "samples": [
+          {
+            "gsm": "GSM1039169",
+            "series_title": "91T A4_mRNA"
+          },
+          {
+            "gsm": "GSM1039170",
+            "series_title": "91T B3_mRNA"
+          }
+        ]
+      }
+    ],
+    "paper_158_count_interpretation": "The public GEO data contain 160 primary tumor profiles from 158 patient IDs. This is consistent with, but does not prove, interpreting the article's 158 tumors as unique patients; the article's counting unit and exclusions remain unverified."
+  },
   "excluded_metastatic_samples": 54,
   "minimum_profile_correlation": 0.8052991021261175,
   "sample_identity_and_label_disagreements_in_previous_file": {

@@ -1,0 +1,48 @@
+{
+  "result": "passed",
+  "note": "No KPCA fitting, image mapping, classifier training, or target-label loading was performed.",
+  "source_path": "Data/TvsN/TCGA_BRCA_NvT_new.csv",
+  "source_sha256": "dfd99d30eb4da8de0978992823d15191993a6a4472808ca2ccf761dd5cd3d33b",
+  "target_path": "Data/TvsN/GSE183947_TvsN_official_60.csv",
+  "target_sha256": "a1135533f6eb1e13e33454d6f1814d099d036ee8b7fe538ca66a0dbbf8261ad6",
+  "target_patient_map_sha256": "cae2f1a09f6617460778ee3c30f2c12e7d0cd0dab8fe20aab1f6eab8b079f9d3",
+  "seed": 55,
+  "counts": {
+    "source_samples": 589,
+    "source_patients": 544,
+    "target_samples": 60,
+    "target_patients": 31,
+    "source_train_samples": 471,
+    "source_validation_samples": 118,
+    "target_adaptation_samples": 40,
+    "target_test_samples": 20,
+    "target_adaptation_patients": 21,
+    "target_test_patients": 10
+  },
+  "features": {
+    "source_retained_after_30pct_filter": 15743,
+    "target_retained_after_30pct_filter": 18152,
+    "shared_retained_genes": 13265,
+    "source_kpca_gram_entries": 247842049,
+    "target_kpca_gram_entries": 329495104,
+    "kernel_pca_input_dtype": "float64",
+    "kernel_pca_dense_gram_estimated_bytes_per_entry": 8,
+    "source_kpca_gram_estimated_GiB": 1.8465671613812447,
+    "target_kpca_gram_estimated_GiB": 2.454929828643799,
+    "source_float32_gram_GiB": 0.9232835806906223,
+    "target_float32_gram_GiB": 1.2274649143218994
+  },
+  "scaling": {
+    "target_adaptation_outside_unit_interval_fraction": 0.08193725209343324,
+    "target_adaptation_scaled_min": -0.2256953366544607,
+    "target_adaptation_scaled_max": 562.7434195173453,
+    "shared_scaler_fit_scope": "source training only",
+    "target_private_filter_and_scaler_fit_scope": "target adaptation only"
+  },
+  "leakage_checks": {
+    "target_test_labels_materialized": false,
+    "target_labels_used_for_split": false,
+    "patient_overlap_adapt_test": 0,
+    "source_target_patient_overlap": 0
+  }
+}

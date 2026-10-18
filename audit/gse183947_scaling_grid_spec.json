@@ -1,0 +1,53 @@
+{
+  "name": "gse183947_seed55_scaling_grid",
+  "task_name": "tvsn",
+  "seed": 55,
+  "source_path": "Data/TvsN/TCGA_BRCA_NvT_new.csv",
+  "target_path": "Data/TvsN/GSE183947_TvsN_official_60.csv",
+  "target_patient_map": "audit/gse183947_patient_map.json",
+  "common_options": {
+    "--feature-scope": "all",
+    "--variance-percentile": 30,
+    "--model": "resnet50d",
+    "--regularization-mode": "trace"
+  },
+  "allowed_config_differences": [
+    "arm",
+    "shared_scaling_policy"
+  ],
+  "runs": [
+    {
+      "name": "baseline_source_scaling",
+      "arm": "baseline",
+      "variant": "zero-optimization baseline; shared genes source-fitted MinMax",
+      "options": {
+        "--shared-scaling-policy": "source"
+      }
+    },
+    {
+      "name": "kpcada_source_scaling",
+      "arm": "kpcada",
+      "variant": "trace KPCA-DA; shared genes source-fitted MinMax",
+      "options": {
+        "--shared-scaling-policy": "source"
+      }
+    },
+    {
+      "name": "baseline_adaptation_scaling",
+      "arm": "baseline",
+      "variant": "zero-optimization baseline; shared genes target-adaptation-fitted MinMax",
+      "options": {
+        "--shared-scaling-policy": "target_adaptation"
+      }
+    },
+    {
+      "name": "kpcada_adaptation_scaling",
+      "arm": "kpcada",
+      "variant": "trace KPCA-DA; shared genes target-adaptation-fitted MinMax",
+      "options": {
+        "--shared-scaling-policy": "target_adaptation"
+      }
+    }
+  ],
+  "evaluation_role": "External development comparison only; all four frozen candidates must finish before one-time target-test scoring. Any selected preprocessing revision requires independent confirmation on a separate cohort."
+}

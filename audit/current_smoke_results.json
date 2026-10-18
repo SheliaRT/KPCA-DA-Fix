@@ -4,11 +4,23 @@
     "mmd_only_final_loss_equals_mmd": true,
     "vml_only_final_loss_equals_weighted_trace": true
   },
+  "accelerator_objective_equivalence": {
+    "cpu_and_mps_final_coordinates_match": true,
+    "cpu_and_mps_final_objective_match": true,
+    "cpu_and_mps_loss_history_match": true,
+    "maximum_coordinate_absolute_difference": 2.9802322387695312e-08
+  },
   "active_notebook_runner": {
     "canonical_matched_runner": true,
     "detached_launch": true,
     "duplicate_launch_guard": true,
     "stale_cohort_and_settings_absent": true
+  },
+  "adaptation_fitted_shared_scaling": {
+    "adaptation_values_map_to_unit_interval": true,
+    "gene_order_invariant": true,
+    "inductive_raw_deepinsight_rejects_transductive_policy": true,
+    "same_scaler_applied_to_source_and_target": true
   },
   "adaptive_gene_cam_selector": {
     "collisions_reported": true,
@@ -22,10 +34,16 @@
     ],
     "strict_threshold_excludes_equal_score": true
   },
+  "aggregation_separates_mmd_bandwidths": true,
+  "aggregation_separates_objective_devices": true,
   "archived_notebook_guards": {
     "archived_outputs_cleared": true,
     "count": 8,
     "first_code_cell_guards_all_archives": true
+  },
+  "attribution_patient_map_provenance": {
+    "explicit_map_hash_checked": true,
+    "saved_sample_patient_alignment_checked": true
   },
   "code_environment_pairing": {
     "legacy_missing_fingerprints_labeled": true,
@@ -102,6 +120,8 @@
     }
   ],
   "combat_train_adapt_only": {
+    "extreme_heldout_values_do_not_change_fitted_estimates": true,
+    "heldout_target_matches_neurocombat_from_training_equation": true,
     "heldout_target_uses_target_batch": true,
     "ordered_shared_genes": true,
     "target_labels_unused": true,
@@ -186,6 +206,7 @@
     }
   },
   "deterministic_variance_filter": {
+    "combat_uses_same_filter": true,
     "constant_features_removed": 2,
     "input_features": 10,
     "requested_discard_percent": 30,
@@ -201,6 +222,19 @@
   "explicit_patient_mapping": {
     "multiple_samples_grouped_to_one_patient": true,
     "unmapped_sample_rejected": true
+  },
+  "fixed_kernel_cache_equivalence": {
+    "mmd_value_and_gradient_match_uncached": true,
+    "trace_value_and_gradient_match_uncached": true
+  },
+  "frozen_backbone_pairing": {
+    "default_policy_is_full_finetuning": true,
+    "freeze_setting_in_matched_pair_contract": true
+  },
+  "frozen_backbone_training": {
+    "batchnorm_running_statistics_unchanged": true,
+    "exposed_as_explicit_ablation": true,
+    "only_classifier_head_trainable": true
   },
   "frozen_target_inference": {
     "batch_partition_invariant": true,
@@ -230,20 +264,46 @@
       "run_combat_tvsn_experiment.py"
     ]
   },
+  "geo_profile_patient_reconciliation": {
+    "160_tumor_profiles_from_158_patients": true,
+    "40_matched_normal_tumor_patient_groups_stay_together": true,
+    "all_repeated_profiles_share_patient_split_group": true,
+    "paper_counting_unit_remains_unconfirmed": true,
+    "repeated_patient_ids": [
+      "101",
+      "91"
+    ]
+  },
+  "image_transformer_defaults_match_core_api": true,
   "independent_kpca_estimators": {
     "source_and_target_models_are_distinct": true,
     "source_transform_matches_source_fit": true,
     "target_transform_is_unadapted_and_separate_from_optimized_coordinates": true
   },
+  "input_fingerprint_guard": {
+    "changed_input_rejected": true,
+    "unchanged_input_accepted": true
+  },
   "kpca_equation": {
     "code_matches_V_times_sqrt_eigenvalues": true,
     "code_matches_paper_V_divided_by_sqrt_eigenvalues": false
   },
+  "lambda_candidate_coordinate_integrity": {
+    "near_zero_variance_rejected": true,
+    "nonfinite_coordinates_rejected": true,
+    "normalized_displacement_reported": true,
+    "variance_retention_reported": true
+  },
+  "lambda_selection_rejects_coordinate_collapse": true,
   "lambda_selection_reuses_selected_embedding": true,
   "lambda_sweep_fixed_embedding": {
     "candidate_count": 2,
     "same_fixed_mmd_gamma": true,
     "same_initial_source_and_target_embeddings": true
+  },
+  "legacy_preprocessor_pickle_compatibility": {
+    "pre_shared_scaling_source_transform_matches": true,
+    "pre_shared_scaling_target_transform_matches": true
   },
   "mmd_counterexample": {
     "identical": {
@@ -256,6 +316,10 @@
       "full_mmd2": 1.0,
       "legacy_loss": 5.960464477539063e-08
     }
+  },
+  "nested_image_transformer_import_fallback": {
+    "repository_root_package_import_succeeds": true,
+    "scripts_parent_added_to_path": true
   },
   "new_protocol_helpers": {
     "binary_sensitivity": 0.5,
@@ -289,6 +353,19 @@
     "metric_labeled_as_marginal": true,
     "shifted_inputs_have_positive_distance": true
   },
+  "paired_objective_device_contract": {
+    "different_effective_devices_rejected": true,
+    "same_effective_device_accepted": true
+  },
+  "paper_faithful_kpcada_api_defaults": {
+    "KPCA_DA": "trace",
+    "default_adaptation_steps": 500,
+    "default_kpca_gamma": 0.2,
+    "default_lambda_reg": 0.001,
+    "default_learning_rate": 0.001,
+    "fit_transform": "trace",
+    "tune_lambda": "trace"
+  },
   "posthoc_centroid_shift": {
     "after": 0.9999999999999997,
     "before": 5.0,
@@ -299,7 +376,9 @@
     "configuration_mismatch_rejected": true
   },
   "preprocessing_policy_pairing": {
+    "adaptation_only_shared_scaling_supported": true,
     "rank_filter_mismatch_rejected": true,
+    "scaling_policy_fit_scope_mismatch_rejected": true,
     "shared_scope_private_fit_difference_allowed": true
   },
   "raw_baseline_fit_scope_verification": {
@@ -340,6 +419,20 @@
     "regularization_mode": "reference",
     "reported": 0.0014231462264433503
   },
+  "runner_mmd_gamma_protocol": {
+    "automatic_default": "supplement median-distance heuristic",
+    "baseline_fixed_gamma_rejected": true,
+    "fixed_paper_bandwidth_accepted": 965.55,
+    "nonpositive_or_nonfinite_rejected": true
+  },
+  "runner_target_label_withholding": {
+    "labels_loaded_only_after_prediction_for_final_scoring": true,
+    "parser_skips_target_label_row_during_fit_and_prediction": true,
+    "runners": [
+      "run_tvsn_experiment.py",
+      "run_combat_tvsn_experiment.py"
+    ]
+  },
   "shared_gene_pixel_anchor": {
     "anchored_gene_count": 2,
     "shared_features_use_source_pixels": true,
@@ -349,6 +442,10 @@
     "matched_shared_genes": 5,
     "preserves_target_pairwise_distances": true,
     "recovers_known_rigid_transform": true
+  },
+  "shared_scaler_fit_manifest": {
+    "adaptation_only_fit_ids_accepted": true,
+    "missing_or_source_fit_ids_rejected_for_adaptation_policy": true
   },
   "source_fitted_ica_distance_contract": {
     "centroid_shift_is_measured_not_removed": true,
@@ -381,11 +478,25 @@
   "target_label_selection_guard": "blocked by default",
   "target_label_withholding": {
     "expression_and_sample_ids_unchanged": true,
+    "final_scoring_reads_labels_without_reloading_expression_matrix": true,
+    "label_row_skipped_by_csv_parser": true,
     "unlabeled_loader_returns_no_label_array": true
   },
   "transform_api": {
     "explicit_target_gene_projection_matches": true,
     "matches_unadapted_kpca": true,
-    "max_difference_from_optimized_target": 0.0003531136519433209
+    "max_difference_from_optimized_target": 0.00776651657279126
+  },
+  "tuned_cache_invalidated_on_device_change": true,
+  "withheld_grid_matched_configuration": {
+    "declared_variants_accepted": true,
+    "undeclared_model_difference_rejected": true
+  },
+  "withheld_grid_scaler_manifest": {
+    "adaptation_ids_accepted": true,
+    "missing_or_source_ids_rejected": true
+  },
+  "withheld_grid_spec_snapshot": {
+    "loaded_spec_and_digest_remain_bound_to_same_bytes": true
   }
 }

@@ -1,4 +1,5 @@
 import hashlib
+import csv
 import torch
 import torch.optim as optim
 import pandas as pd
@@ -17,7 +18,8 @@ DEFAULT_TARGET_PATH = str(_REPOSITORY_ROOT / "Data" / "TvsN" / "GSE45498_TvsN_of
 
 
 def _fit_signature(X_source: np.ndarray, X_target: np.ndarray,
-                   genes_source: np.ndarray, genes_target: np.ndarray) -> str:
+                   genes_source: np.ndarray, genes_target: np.ndarray,
+                   settings: tuple[Any, ...] = ()) -> str:
     digest = hashlib.sha256()
     for value in (X_source, X_target, genes_source, genes_target):
         array = np.ascontiguousarray(value)
@@ -27,6 +29,7 @@ def _fit_signature(X_source: np.ndarray, X_target: np.ndarray,
             digest.update(repr(array.tolist()).encode("utf-8"))
         else:
             digest.update(array.view(np.uint8))
+    digest.update(repr(settings).encode("utf-8"))
     return digest.hexdigest()
 
 
@@ -47,19 +50,48 @@ def load_expression_dataset(
     label column is omitted from the feature matrix and is not materialized as
     a label array.
     """
-    expr = pd.read_csv(csv_path, encoding="utf-8", engine="python")
+    read_kwargs = {"encoding": "utf-8", "engine": "python"}
+    if not include_labels:
+        # The repository matrix stores target labels in its final CSV row.
+        # Skip that row in the parser rather than reading it and discarding it
+        # later, preserving a genuinely label-free preflight path.
+        read_kwargs["skipfooter"] = 1
+    expr = pd.read_csv(csv_path, **read_kwargs)
     expr = expr.transpose()
     expr.columns = expr.iloc[0]
     samples = expr.index[1:].to_numpy()
-    matrix = expr.iloc[1:, 0:-1].astype(float).values.T
-    genes = expr.iloc[:, :-1].columns.to_numpy()
-    labels = expr.iloc[1:, -1].to_numpy() if include_labels else None
+    if include_labels:
+        matrix = expr.iloc[1:, 0:-1].astype(float).values.T
+        genes = expr.iloc[:, :-1].columns.to_numpy()
+        labels = expr.iloc[1:, -1].to_numpy()
+    else:
+        matrix = expr.iloc[1:, :].astype(float).values.T
+        genes = expr.columns.to_numpy()
+        labels = None
     return matrix, genes, samples, labels
 
 
 def load_labels(csv_path: str) -> np.ndarray:
-    """Extract sample labels from the last column of the expression CSV."""
-    return load_expression_dataset(csv_path)[3]
+    """Read only the final label row of the expression CSV.
+
+    Runners call this after model fitting and held-out prediction. Streaming
+    the last row avoids loading the large expression matrix a second time at
+    scoring time.
+    """
+    last_row = None
+    expected_columns = None
+    with open(csv_path, "r", encoding="utf-8", newline="") as handle:
+        reader = csv.reader(handle)
+        header = next(reader, None)
+        if header is None or len(header) < 2:
+            raise ValueError("Expression CSV must include a header and sample columns")
+        expected_columns = len(header)
+        for row in reader:
+            if row:
+                last_row = row
+    if last_row is None or len(last_row) != expected_columns:
+        raise ValueError("Expression CSV final label row is missing or malformed")
+    return np.asarray(last_row[1:], dtype=str)
 
 
 def standardize_datasets(X_source: np.ndarray, X_target: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
@@ -107,6 +139,26 @@ def rbf_kernel(x: torch.Tensor, y: torch.Tensor, gamma: float = 1.0) -> torch.Te
     return torch.exp(-gamma * pairwise_distances)
 
 
+def resolve_optimization_device(requested: str = "cpu") -> torch.device:
+    """Resolve the tensor-optimization device without changing the KPCA fits."""
+    value = str(requested).lower()
+    if value == "auto":
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            return torch.device("mps")
+        return torch.device("cpu")
+    if value == "cuda" and not torch.cuda.is_available():
+        raise ValueError("CUDA optimization was requested but CUDA is unavailable")
+    if value == "mps" and not (
+        hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+    ):
+        raise ValueError("MPS optimization was requested but MPS is unavailable")
+    if value not in {"cpu", "cuda", "mps"}:
+        raise ValueError("optimization_device must be auto, cpu, cuda, or mps")
+    return torch.device(value)
+
+
 def compute_median_gamma(Zs: torch.Tensor, Zt: torch.Tensor) -> float:
     """Set RBF gamma via the median pairwise-distance heuristic.
 
@@ -119,18 +171,35 @@ def compute_median_gamma(Zs: torch.Tensor, Zt: torch.Tensor) -> float:
     return (1.0 / median_sq.clamp(min=1e-8)).item()
 
 
-def mmd_loss(Zs_common: torch.Tensor, Zt_common: torch.Tensor, gamma: float = 1.0) -> torch.Tensor:
+def mmd_loss(
+    Zs_common: torch.Tensor,
+    Zt_common: torch.Tensor,
+    gamma: float = 1.0,
+    *,
+    source_kernel_mean: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
     """Biased empirical squared MMD for an RBF kernel (main paper Eq. 15)."""
-    K_ss = rbf_kernel(Zs_common, Zs_common, gamma)
+    if source_kernel_mean is None:
+        source_kernel_mean = rbf_kernel(Zs_common, Zs_common, gamma).mean()
+    elif source_kernel_mean.numel() != 1:
+        raise ValueError("source_kernel_mean must be a scalar kernel average")
     K_tt = rbf_kernel(Zt_common, Zt_common, gamma)
     K_st = rbf_kernel(Zs_common, Zt_common, gamma)
-    return K_ss.mean() + K_tt.mean() - 2.0 * K_st.mean()
+    return source_kernel_mean + K_tt.mean() - 2.0 * K_st.mean()
+
+
+def regularization_term_from_kernel(
+    Z_t: torch.Tensor, K_t: torch.Tensor,
+) -> torch.Tensor:
+    """Evaluate the manuscript trace penalty with a precomputed fixed kernel."""
+    if K_t.ndim != 2 or K_t.shape[0] != K_t.shape[1] or K_t.shape[0] != Z_t.shape[0]:
+        raise ValueError("K_t must be square and match the target gene coordinate rows")
+    return torch.trace(Z_t.T @ K_t @ Z_t)
 
 
 def regularization_term(Z_t: torch.Tensor, X_t: torch.Tensor, gamma: float = 1.0) -> torch.Tensor:
     K_t = rbf_kernel(X_t.T, X_t.T, gamma)
-    A = Z_t.T @ K_t @ Z_t
-    return torch.trace(A)
+    return regularization_term_from_kernel(Z_t, K_t)
 
 
 def reference_preservation_term(Z_t: torch.Tensor, Z_t_initial: torch.Tensor,
@@ -141,6 +210,50 @@ def reference_preservation_term(Z_t: torch.Tensor, Z_t_initial: torch.Tensor,
     if reference_energy.detach().item() <= eps:
         raise ValueError("Initial target embedding has no variance to preserve")
     return (Z_t - Z_t_initial).square().sum() / reference_energy.clamp_min(eps)
+
+
+def target_coordinate_integrity(
+    Z_initial: np.ndarray, Z_adapted: np.ndarray,
+) -> Dict[str, Any]:
+    """Measure coordinate validity and deformation without target labels.
+
+    The collapse cutoff is a numerical guard, not a performance-derived
+    threshold. Other measures are reported but do not affect selection.
+    """
+    initial = np.asarray(Z_initial, dtype=float)
+    adapted = np.asarray(Z_adapted, dtype=float)
+    if initial.shape != adapted.shape or initial.ndim != 2 or initial.size == 0:
+        raise ValueError("Initial and adapted target coordinates must be matching non-empty matrices")
+    finite = bool(np.isfinite(initial).all() and np.isfinite(adapted).all())
+    if not finite:
+        return {"finite": False, "variance_retention_ratio": None,
+                "normalized_displacement": None, "collapsed": True}
+    initial_centered = initial - initial.mean(axis=0, keepdims=True)
+    adapted_centered = adapted - adapted.mean(axis=0, keepdims=True)
+    initial_energy = float(np.mean(np.sum(initial_centered ** 2, axis=1)))
+    adapted_energy = float(np.mean(np.sum(adapted_centered ** 2, axis=1)))
+    if initial_energy <= np.finfo(float).tiny:
+        return {
+            "finite": True,
+            "initial_centered_energy": initial_energy,
+            "adapted_centered_energy": adapted_energy,
+            "variance_retention_ratio": None,
+            "normalized_displacement": None,
+            "collapsed": True,
+        }
+    variance_ratio = adapted_energy / initial_energy
+    scale = float(np.sqrt(initial_energy))
+    displacement = float(np.sqrt(np.mean(np.sum((adapted - initial) ** 2, axis=1))))
+    normalized_displacement = displacement / scale
+    collapsed = adapted_energy <= 1e-12 * initial_energy
+    return {
+        "finite": True,
+        "initial_centered_energy": initial_energy,
+        "adapted_centered_energy": adapted_energy,
+        "variance_retention_ratio": float(variance_ratio),
+        "normalized_displacement": float(normalized_displacement),
+        "collapsed": bool(collapsed),
+    }
 
 
 def align_target_embedding_to_source(
@@ -205,16 +318,17 @@ def fit_transform(
     *,
     n_components: int = 2,
     kernel: str = "rbf",
-    kpca_gamma: Optional[float] = None,
+    kpca_gamma: Optional[float] = 0.2,
     mmd_gamma: float = 0.5,
     auto_gamma: bool = True,
-    lambda_reg: float = 0.01,
+    lambda_reg: float = 0.001,
     alignment_weight: float = 1.0,
-    lr: float = 0.0001,
-    epochs: int = 100,
-    regularization_mode: str = "reference",
+    lr: float = 0.001,
+    epochs: int = 500,
+    regularization_mode: str = "trace",
     kpca_random_state: int = 42,
     align_shared_genes: bool = False,
+    optimization_device: str = "cpu",
     initial_embeddings: Optional[Dict[str, Any]] = None,
     verbose: bool = False,
 ) -> Dict[str, Any]:
@@ -224,12 +338,16 @@ def fit_transform(
     When auto_gamma=True (default), the MMD kernel bandwidth is set automatically
     via the median pairwise-distance heuristic on the initial KPCA embeddings,
     replacing the fixed mmd_gamma value.
+
+    optimization_device selects the CPU/CUDA/MPS device for the differentiable
+    objective only; the two sklearn KernelPCA fits remain on CPU.
     """
     # Find common gene indices
     if genes_source is None or genes_target is None:
         raise ValueError("genes_source and genes_target must be provided for gene-based matching")
     if not np.isfinite(alignment_weight) or alignment_weight < 0:
         raise ValueError("alignment_weight must be finite and nonnegative")
+    objective_device = resolve_optimization_device(optimization_device)
     
     common_source_idx, common_target_idx = find_common_gene_indices(genes_source, genes_target)
 
@@ -269,11 +387,14 @@ def fit_transform(
         if align_shared_genes and kpca_alignment is None:
             raise ValueError("Cached initial embeddings do not include shared-gene alignment")
 
-    # Convert to tensors
-    Z_s = torch.tensor(Z_s_np, dtype=torch.float32)
-    Z_t = torch.tensor(Z_t_np, dtype=torch.float32, requires_grad=True)
-    Z_t_initial = torch.tensor(Z_t_np, dtype=torch.float32)
-    X_t_tensor = torch.tensor(X_target_scaled.T, dtype=torch.float32)
+    # KPCA fitting remains in sklearn/NumPy. Only the differentiable objective
+    # and its fixed kernels move to the requested accelerator.
+    Z_s = torch.tensor(Z_s_np, dtype=torch.float32, device=objective_device)
+    Z_t = torch.tensor(Z_t_np, dtype=torch.float32, device=objective_device,
+                       requires_grad=True)
+    Z_t_initial = torch.tensor(Z_t_np, dtype=torch.float32, device=objective_device)
+    X_t_tensor = torch.tensor(X_target_scaled.T, dtype=torch.float32,
+                              device=objective_device)
 
     # Auto-select MMD gamma from the initial embedding distances
     if auto_gamma:
@@ -283,22 +404,37 @@ def fit_transform(
         if verbose:
             print(f"Auto-computed MMD gamma (median heuristic): {mmd_gamma:.6f}")
 
+    # Both kernels depend only on fixed fit inputs and gamma. Recompute neither
+    # during the 500-step coordinate optimization nor during loss-history logging.
+    Zs_common = Z_s[common_source_idx]
+    source_kernel_mean = rbf_kernel(
+        Zs_common, Zs_common, mmd_gamma
+    ).mean().detach()
+    target_regularization_kernel = None
+    if regularization_mode == "trace":
+        with torch.no_grad():
+            target_regularization_kernel = rbf_kernel(
+                X_t_tensor.T, X_t_tensor.T, mmd_gamma
+            ).detach()
+
     optimizer = optim.SGD([Z_t], lr=lr)
-    loss_history: List[float] = []
+    loss_history_tensors: List[torch.Tensor] = []
 
     for epoch in range(epochs):
         optimizer.zero_grad()
 
         # Extract common points
-        Zs_common = Z_s[common_source_idx]
         Zt_common = Z_t[common_target_idx]
 
         # Compute losses
-        mmd = mmd_loss(Zs_common, Zt_common, gamma=mmd_gamma)
+        mmd = mmd_loss(
+            Zs_common, Zt_common, gamma=mmd_gamma,
+            source_kernel_mean=source_kernel_mean,
+        )
         if regularization_mode == "reference":
             reg = reference_preservation_term(Z_t, Z_t_initial)
         elif regularization_mode == "trace":
-            reg = regularization_term(Z_t, X_t_tensor, gamma=mmd_gamma)
+            reg = regularization_term_from_kernel(Z_t, target_regularization_kernel)
         elif regularization_mode == "none":
             reg = Z_t.new_zeros(())
         else:
@@ -311,15 +447,20 @@ def fit_transform(
 
         # Log all terms at the same post-update endpoint returned to callers.
         with torch.no_grad():
-            mmd_after = mmd_loss(Zs_common, Z_t[common_target_idx], gamma=mmd_gamma)
+            mmd_after = mmd_loss(
+                Zs_common, Z_t[common_target_idx], gamma=mmd_gamma,
+                source_kernel_mean=source_kernel_mean,
+            )
             if regularization_mode == "reference":
                 reg_after = reference_preservation_term(Z_t, Z_t_initial)
             elif regularization_mode == "trace":
-                reg_after = regularization_term(Z_t, X_t_tensor, gamma=mmd_gamma)
+                reg_after = regularization_term_from_kernel(
+                    Z_t, target_regularization_kernel
+                )
             else:
                 reg_after = Z_t.new_zeros(())
             loss_after = alignment_weight * mmd_after + lambda_reg * reg_after
-        loss_history.append(loss_after.item())
+        loss_history_tensors.append(loss_after.detach())
 
         if verbose and epoch % max(1, epochs // 10) == 0:
             print(f"Epoch {epoch}, Loss: {loss_after.item():.4f}, MMD: {mmd_after.item():.4f}, Reg: {reg_after.item():.4f}")
@@ -327,20 +468,29 @@ def fit_transform(
     # Return all loss components at the exact coordinates serialized by the
     # caller. This also covers the zero-epoch no-adaptation control.
     with torch.no_grad():
-        final_mmd = mmd_loss(Z_s[common_source_idx], Z_t[common_target_idx],
-                             gamma=mmd_gamma)
+        final_mmd = mmd_loss(
+            Zs_common, Z_t[common_target_idx], gamma=mmd_gamma,
+            source_kernel_mean=source_kernel_mean,
+        )
         if regularization_mode == "reference":
             final_reg = reference_preservation_term(Z_t, Z_t_initial)
         elif regularization_mode == "trace":
-            final_reg = regularization_term(Z_t, X_t_tensor, gamma=mmd_gamma)
+            final_reg = regularization_term_from_kernel(
+                Z_t, target_regularization_kernel
+            )
         else:
             final_reg = Z_t.new_zeros(())
         final_loss = alignment_weight * final_mmd + lambda_reg * final_reg
 
+    loss_history = (
+        torch.stack(loss_history_tensors).cpu().tolist()
+        if loss_history_tensors else []
+    )
+
     return {
-        "Z_s": Z_s.detach().numpy(),
-        "Z_t": Z_t.detach().numpy(),
-        "Z_t_initial": Z_t_initial.numpy(),
+        "Z_s": Z_s.detach().cpu().numpy(),
+        "Z_t": Z_t.detach().cpu().numpy(),
+        "Z_t_initial": Z_t_initial.detach().cpu().numpy(),
         "common_source_idx": common_source_idx,
         "common_target_idx": common_target_idx,
         "loss_history": loss_history,
@@ -353,6 +503,7 @@ def fit_transform(
         "common_genes_count": len(common_source_idx),
         "mmd_gamma": mmd_gamma,
         "regularization_mode": regularization_mode,
+        "optimization_device": str(objective_device),
         "lambda_reg": lambda_reg,
         "alignment_weight": alignment_weight,
         "learning_rate": lr,
@@ -374,16 +525,17 @@ class KPCA_DA:
         self,
         n_components: int = 2,
         kernel: str = "rbf",
-        kpca_gamma: Optional[float] = None,
+        kpca_gamma: Optional[float] = 0.2,
         mmd_gamma: float = 0.5,
         auto_gamma: bool = True,
-        lambda_reg: float = 0.01,
+        lambda_reg: float = 0.001,
         alignment_weight: float = 1.0,
-        lr: float = 0.0001,
-        epochs: int = 100,
-        regularization_mode: str = "reference",
+        lr: float = 0.001,
+        epochs: int = 500,
+        regularization_mode: str = "trace",
         kpca_random_state: int = 42,
         align_shared_genes: bool = False,
+        optimization_device: str = "cpu",
         verbose: bool = False,
     ):
         """Initialize KPCA_DA model.
@@ -394,21 +546,25 @@ class KPCA_DA:
             Number of components for KernelPCA
         kernel : str, default='rbf'
             Kernel type for KernelPCA
-        kpca_gamma : float or None, default=None
+        kpca_gamma : float or None, default=0.2
             Gamma parameter for KernelPCA kernel
         mmd_gamma : float, default=0.5
             Gamma parameter for MMD kernel (ignored when auto_gamma=True)
         auto_gamma : bool, default=True
             Automatically set MMD gamma via median pairwise-distance heuristic
-        lambda_reg : float, default=0.01
+        lambda_reg : float, default=0.001
             Regularization strength
-        lr : float, default=0.0001
+        lr : float, default=0.001
             Learning rate for optimization
-        epochs : int, default=100
+        epochs : int, default=500
             Number of optimization epochs
-        regularization_mode : str, default='reference'
-            Target-coordinate penalty: normalized movement from initial coordinates
-            ('reference'), historical trace penalty ('trace'), or no penalty ('none').
+        regularization_mode : str, default='trace'
+            Target-coordinate penalty: historical manuscript trace penalty
+            ('trace'), normalized movement from initial coordinates
+            ('reference'), or no penalty ('none').
+        optimization_device : str, default='cpu'
+            Device used for the differentiable objective: 'cpu', 'cuda', 'mps',
+            or 'auto'. KernelPCA fitting remains on CPU.
         verbose : bool, default=False
             Whether to print progress
         """
@@ -424,6 +580,7 @@ class KPCA_DA:
         self.regularization_mode = regularization_mode
         self.kpca_random_state = kpca_random_state
         self.align_shared_genes = align_shared_genes
+        self.optimization_device = optimization_device
         self.verbose = verbose
         
         self.kpca_model = None
@@ -437,6 +594,15 @@ class KPCA_DA:
         self.loss_history_ = None
         self._tuned_fit_result = None
         self._tuned_fit_signature = None
+
+    def _fit_cache_settings(self) -> tuple[Any, ...]:
+        """Settings that determine cached KPCA-DA coordinates and losses."""
+        return (
+            self.n_components, self.kernel, self.kpca_gamma, self.mmd_gamma,
+            self.auto_gamma, self.lambda_reg, self.alignment_weight, self.lr,
+            self.epochs, self.regularization_mode, self.kpca_random_state,
+            self.align_shared_genes, self.optimization_device,
+        )
     
     def fit_transform(
         self,
@@ -467,7 +633,10 @@ class KPCA_DA:
         """
         if genes_source is None or genes_target is None:
             raise ValueError("genes_source and genes_target must be provided for gene-based matching")
-        signature = _fit_signature(X_source, X_target, genes_source, genes_target)
+        signature = _fit_signature(
+            X_source, X_target, genes_source, genes_target,
+            settings=self._fit_cache_settings(),
+        )
         if (self._tuned_fit_result is not None
                 and signature == self._tuned_fit_signature):
             results = self._tuned_fit_result
@@ -489,6 +658,7 @@ class KPCA_DA:
                 regularization_mode=self.regularization_mode,
                 kpca_random_state=self.kpca_random_state,
                 align_shared_genes=self.align_shared_genes,
+                optimization_device=self.optimization_device,
                 verbose=self.verbose,
             )
         self._tuned_fit_result = None
@@ -510,6 +680,7 @@ class KPCA_DA:
         self.regularization_mode_ = results["regularization_mode"]
         self.optimization_epochs_ = results["epochs"]
         self.optimization_lr_ = results["learning_rate"]
+        self.optimization_device_ = results["optimization_device"]
         self.kpca_model = results["kpca_model"]
         self.kpca_source_model_ = results.get("kpca_source_model")
         self.kpca_target_model_ = results.get("kpca_target_model", self.kpca_model)
@@ -560,6 +731,7 @@ class KPCA_DA:
             regularization_mode=self.regularization_mode,
             kpca_random_state=self.kpca_random_state,
             align_shared_genes=self.align_shared_genes,
+            optimization_device=self.optimization_device,
             verbose=self.verbose,
         )
         if y_source is not None and y_target is not None:
@@ -571,7 +743,8 @@ class KPCA_DA:
         self.auto_gamma = False
         self._tuned_fit_result = summary["_fit_results_by_lambda"][selected_lambda]
         self._tuned_fit_signature = _fit_signature(
-            X_source, X_target, genes_source, genes_target
+            X_source, X_target, genes_source, genes_target,
+            settings=self._fit_cache_settings(),
         )
         summary.pop("_fit_results_by_lambda")
         return summary
@@ -629,19 +802,25 @@ def tune_lambda(
     *,
     n_components: int = 2,
     kernel: str = "rbf",
-    kpca_gamma: Optional[float] = None,
+    kpca_gamma: Optional[float] = 0.2,
     mmd_gamma: float = 0.5,
     auto_gamma: bool = True,
     alignment_weight: float = 1.0,
-    lr: float = 0.0001,
-    epochs: int = 100,
-    regularization_mode: str = "reference",
+    lr: float = 0.001,
+    epochs: int = 500,
+    regularization_mode: str = "trace",
     allow_target_label_selection: bool = False,
     kpca_random_state: int = 42,
     align_shared_genes: bool = False,
+    optimization_device: str = "cpu",
     verbose: bool = False,
 ) -> Dict[str, Any]:
     """Search over lambda_values and report final MMD and (optionally) accuracy for each.
+
+    Label-free MMD selection excludes candidates with nonfinite objectives or
+    numerically collapsed target coordinates. Every candidate reports its
+    variance-retention ratio and normalized displacement; those measurements
+    do not otherwise impose an empirical distortion threshold.
 
     Parameters
     ----------
@@ -659,7 +838,8 @@ def tune_lambda(
     dict with keys:
         "results"     — list of dicts, one per lambda, with keys:
                           lambda, final_mmd, final_loss, accuracy (if labels given)
-        "best_lambda_mmd"      — lambda with lowest final MMD
+        "best_lambda_mmd"      — eligible lambda with lowest final MMD
+        "rejected_candidates"  — lambda values excluded by numerical validity checks
         "best_lambda_accuracy" — lambda with highest accuracy (if labels given)
         "results_df"  — pandas DataFrame summary
     """
@@ -735,6 +915,7 @@ def tune_lambda(
             regularization_mode=regularization_mode,
             kpca_random_state=kpca_random_state,
             align_shared_genes=align_shared_genes,
+            optimization_device=optimization_device,
             initial_embeddings=initial_embeddings,
             verbose=verbose,
         )
@@ -754,10 +935,21 @@ def tune_lambda(
             "final_mmd": final_mmd,
             "final_loss": final_loss,
             "final_regularization": final_reg,
+            "coordinate_integrity": target_coordinate_integrity(
+                res["Z_t_initial"], Z_t
+            ),
             "final_loss_history_endpoint": (
                 res["loss_history"][-1] if res["loss_history"] else final_loss
             ),
         }
+        objective_finite = bool(np.isfinite([
+            final_mmd, final_loss, final_reg
+        ]).all())
+        record["eligible_for_label_free_selection"] = bool(
+            objective_finite
+            and record["coordinate_integrity"]["finite"]
+            and not record["coordinate_integrity"]["collapsed"]
+        )
 
         if use_accuracy:
             # Project samples into gene-embedding space:
@@ -779,16 +971,36 @@ def tune_lambda(
 
         records.append(record)
 
-    best_mmd_rec = min(records, key=lambda r: r["final_mmd"])
+    eligible_records = [record for record in records
+                        if record["eligible_for_label_free_selection"]]
+    if not eligible_records:
+        raise ValueError(
+            "No lambda candidate has finite losses and non-collapsed target coordinates; "
+            "run the explicit no-adaptation baseline instead"
+        )
+    best_mmd_rec = min(eligible_records, key=lambda r: r["final_mmd"])
     summary: Dict[str, Any] = {
         "results": records,
         "best_lambda_mmd": best_mmd_rec["lambda"],
+        "selection_policy": (
+            "lowest final full empirical MMD squared among candidates with finite "
+            "losses and non-collapsed target coordinates"
+        ),
+        "rejected_candidates": [
+            {"lambda": record["lambda"],
+             "reason": ("nonfinite objective or coordinates"
+                       if not record["coordinate_integrity"]["finite"]
+                       or not np.isfinite([record["final_mmd"], record["final_loss"],
+                                           record["final_regularization"]]).all()
+                       else "near-zero target-coordinate variance")}
+            for record in records if not record["eligible_for_label_free_selection"]
+        ],
         "results_df": pd.DataFrame(records),
         "mmd_gamma": mmd_gamma,
         "_fit_results_by_lambda": fit_results,
     }
     if use_accuracy:
-        best_acc_rec = max(records, key=lambda r: r["accuracy"])
+        best_acc_rec = max(eligible_records, key=lambda r: r["accuracy"])
         summary["best_lambda_accuracy"] = best_acc_rec["lambda"]
 
     return summary

@@ -20,9 +20,10 @@ try:
     from kpcada import KPCA_DA
 except ImportError:
     import sys
-    import os
-    # Try to import from Scripts folder
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'examples', 'Scripts'))
+    from pathlib import Path
+    # This package lives under Scripts/pyDeepInsightv3; add its real parent so
+    # direct package imports work from outside the repository working folder.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from kpcada import KPCA_DA
 
 
@@ -42,41 +43,20 @@ class DomainAdaptiveImageTransformer:
     def __init__(self, 
                  kpca_da_params: Optional[dict] = None,
                  discretization: str = 'bin',
-                 pixels: Union[int, Tuple[int, int]] = (224, 224)) -> None:
+                 pixels: Union[int, Tuple[int, int]] = (227, 227)) -> None:
         """Generate a DomainAdaptiveImageTransformer instance
 
         Args:
-            kpca_da_params: dictionary of KPCA_DA parameters. If None, uses defaults:
-                {
-                    'n_components': 2,
-                    'kernel': 'rbf',
-                    'kpca_gamma': 0.2,
-                    'mmd_gamma': 0.5,
-                    'lambda_reg': 0.1,
-                    'lr': 0.0001,
-                    'epochs': 100,
-                    'verbose': True
-                }
+            kpca_da_params: dictionary of KPCA_DA parameters. If None or empty,
+                the core KPCA_DA defaults are used (including paper-aligned
+                gamma, trace penalty, learning rate and adaptation steps).
             discretization: string of values ('bin', 'assignment'). Defines
                 the method for discretizing dimensionally reduced data to pixel
                 coordinates.
             pixels: int (square matrix) or tuple of ints (height, width) that
                 defines the size of the image matrix.
         """
-        # Set default KPCA-DA parameters
-        if kpca_da_params is None:
-            kpca_da_params = {
-                'n_components': 2,
-                'kernel': 'rbf',
-                'kpca_gamma': 0.2,
-                'mmd_gamma': 0.5,
-                'lambda_reg': 0.1,
-                'lr': 0.0001,
-                'epochs': 100,
-                'verbose': True
-            }
-        
-        self._kpca_da = KPCA_DA(**kpca_da_params)
+        self._kpca_da = KPCA_DA(**(kpca_da_params or {}))
         self._dm = self._parse_discretization(discretization)
         self._pixels = self._parse_pixels(pixels)
         

@@ -184,12 +184,34 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
     counts = Counter(labels)
     if counts != Counter({"Tumor": 160, "Normal": 40}):
         raise ValueError(f"Unexpected primary/normal mRNA sample counts: {counts}")
-    if len(set(patients)) != len(patients):
-        # Repeated rows per patient are expected. The manifest retains every GSM;
-        # splits group on the numeric patient identifier.
-        unique_patients = len(set(patients))
-    else:
-        unique_patients = len(patients)
+    # Keep profile/sample counts separate from patient counts. GEO has 160
+    # primary tumor profiles, while two patient IDs each have two profiles.
+    # This may explain the article's reported 158 tumors as a patient count,
+    # but it does not prove that the article counted unique patients.
+    tumor_profiles_by_patient: dict[str, list[dict[str, Any]]] = {}
+    for sample in official_samples:
+        if sample["label"] == "Tumor":
+            tumor_profiles_by_patient.setdefault(sample["patient_id"], []).append(sample)
+    repeated_tumor_profiles = [
+        {
+            "patient_id": patient_id,
+            "profile_count": len(samples),
+            "samples": [
+                {"gsm": sample["gsm"], "series_title": sample["series_title"]}
+                for sample in samples
+            ],
+        }
+        for patient_id, samples in sorted(tumor_profiles_by_patient.items())
+        if len(samples) > 1
+    ]
+    unique_patients = len(set(patients))
+    tumor_patient_count = len(tumor_profiles_by_patient)
+    if (unique_patients, tumor_patient_count, len(repeated_tumor_profiles)) != (158, 158, 2):
+        raise ValueError(
+            "Unexpected patient/profile reconciliation: "
+            f"{unique_patients} total patients, {tumor_patient_count} tumor patients, "
+            f"{len(repeated_tumor_profiles)} repeated tumor patients"
+        )
 
     # Audit the previous matrix by exact expression vectors, then compare its
     # stored labels to official status. It is not used to assign new labels.
@@ -261,6 +283,17 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         "sample_count": len(selected),
         "label_counts": dict(counts),
         "unique_patient_count": unique_patients,
+        "tumor_profile_patient_reconciliation": {
+            "tumor_profile_count": counts["Tumor"],
+            "unique_tumor_patient_count": tumor_patient_count,
+            "additional_profiles_beyond_one_per_patient": counts["Tumor"] - tumor_patient_count,
+            "repeated_tumor_profiles": repeated_tumor_profiles,
+            "paper_158_count_interpretation": (
+                "The public GEO data contain 160 primary tumor profiles from 158 patient IDs. "
+                "This is consistent with, but does not prove, interpreting the article's 158 "
+                "tumors as unique patients; the article's counting unit and exclusions remain unverified."
+            ),
+        },
         "excluded_metastatic_samples": len(metastatic_indices),
         "minimum_profile_correlation": float(min(item["profile_correlation"] for item in official_samples)),
         "sample_identity_and_label_disagreements_in_previous_file": old_audit,

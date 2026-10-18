@@ -22,11 +22,19 @@ from sklearn.preprocessing import LabelEncoder, MinMaxScaler
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "Scripts"))
 from combat_protocol import fit_apply_combat_partitions
-from evaluation_protocol import classification_metrics, fit_with_validation
-from experiment_protocol import make_patient_splits, ordered_common_gene_indices, patient_group_ids
-from kpcada import load_expression_dataset
+from evaluation_protocol import (
+    classification_metrics, configure_trainable_parameters, fit_with_validation,
+)
+from experiment_protocol import (
+    make_patient_splits, ordered_common_gene_indices, patient_group_ids,
+    rank_variance_keep_mask,
+)
+from kpcada import load_expression_dataset, load_labels
 from pyDeepInsightv3.image_transformer_new import DomainAdaptiveImageTransformer
-from run_tvsn_experiment import choose_device, make_loader, set_seed, sha256
+from run_tvsn_experiment import (
+    choose_device, make_loader, python_source_tree_sha256, set_seed, sha256,
+    verify_input_fingerprint,
+)
 
 
 def main() -> int:
@@ -48,18 +56,33 @@ def main() -> int:
     parser.add_argument("--weight-decay", type=float, default=1e-3)
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--no-pretrained", action="store_true")
+    parser.add_argument("--freeze-backbone", action="store_true",
+                        help="train only the classifier head and freeze backbone BatchNorm statistics (development ablation)")
     parser.add_argument("--output-root", default="results/tvsn")
     args = parser.parse_args()
 
     set_seed(args.seed)
+    source_tree_hash = python_source_tree_sha256()
+    environment_lock_path = ROOT / "audit" / "environment.lock.txt"
+    environment_lock_hash = (
+        sha256(environment_lock_path) if environment_lock_path.is_file() else None
+    )
     source_path = Path(args.source_path)
     target_path = Path(args.target_path)
     if not source_path.is_absolute():
         source_path = ROOT / source_path
     if not target_path.is_absolute():
         target_path = ROOT / target_path
+    source_file_hash = sha256(source_path)
+    target_file_hash = sha256(target_path)
     source_gxp, genes_s, ids_s, y_s = load_expression_dataset(str(source_path))
-    target_gxp, genes_t, ids_t, y_t = load_expression_dataset(str(target_path))
+    target_gxp, genes_t, ids_t, y_t = load_expression_dataset(
+        str(target_path), include_labels=False
+    )
+    verify_input_fingerprint(source_path, source_file_hash, "Source")
+    verify_input_fingerprint(target_path, target_file_hash, "Target")
+    if y_t is not None:
+        raise RuntimeError("Unlabeled target loading unexpectedly returned labels")
     ids_s, ids_t = np.asarray(ids_s, dtype=str), np.asarray(ids_t, dtype=str)
     keep = ~np.isin(y_s, np.asarray(args.exclude_source_label))
     excluded_ids = ids_s[~keep].tolist()
@@ -75,11 +98,9 @@ def main() -> int:
         random_state=args.seed, stratify_target=False,
     )
     source_train_raw = source[splits.source_train]
-    variance = np.var(source_train_raw, axis=0)
-    if not 0 <= args.variance_percentile < 100:
-        raise ValueError("variance-percentile must be in [0, 100)")
-    cutoff = np.percentile(variance, args.variance_percentile)
-    source_keep = variance >= cutoff
+    source_keep = rank_variance_keep_mask(
+        source_train_raw, args.variance_percentile
+    )
     filtered_source_genes = np.asarray(genes_s, dtype=object)[source_keep]
     filtered_target_genes = np.asarray(genes_t, dtype=object)
     if len(set(filtered_source_genes.tolist())) != len(filtered_source_genes):
@@ -125,6 +146,9 @@ def main() -> int:
     device = choose_device()
     model = timm.create_model(args.model, pretrained=not args.no_pretrained,
                               num_classes=len(encoder.classes_)).to(device)
+    classifier_training = configure_trainable_parameters(
+        model, freeze_backbone=args.freeze_backbone
+    )
     preprocess = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
@@ -132,14 +156,17 @@ def main() -> int:
     train_loader = make_loader(source_images, ys_train, preprocess, args.batch_size, shuffle=True)
     val_loader = make_loader(validation_images, ys_val, preprocess, args.batch_size)
     test_loader = make_loader(target_images, None, preprocess, args.batch_size)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.classifier_lr,
-                                  weight_decay=args.weight_decay)
+    optimizer = torch.optim.AdamW(
+        (parameter for parameter in model.parameters() if parameter.requires_grad),
+        lr=args.classifier_lr, weight_decay=args.weight_decay,
+    )
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="max", factor=0.5, patience=args.scheduler_patience)
     training = fit_with_validation(
         model, train_loader, val_loader, torch.nn.CrossEntropyLoss(), optimizer,
         scheduler=scheduler, max_epochs=args.classifier_epochs,
         patience=args.early_stopping_patience, monitor="balanced_accuracy",
+        freeze_batchnorm_stats=args.freeze_backbone,
     )
     model.eval()
     predictions, probabilities = [], []
@@ -149,7 +176,13 @@ def main() -> int:
             predictions.extend(logits.argmax(dim=1).cpu().tolist())
             probabilities.extend(logits.softmax(dim=1).cpu().tolist())
     positive = int(encoder.transform(["Tumor"])[0]) if "Tumor" in encoder.classes_ else None
-    truth = encoder.transform(y_t[splits.target_test])
+    # Read target labels only after model fitting and prediction are complete.
+    verify_input_fingerprint(target_path, target_file_hash, "Target")
+    target_labels = load_labels(str(target_path))
+    verify_input_fingerprint(target_path, target_file_hash, "Target")
+    if target_labels.shape != ids_t.shape:
+        raise ValueError("Target label count does not match the unlabeled sample IDs")
+    truth = encoder.transform(target_labels[splits.target_test])
     metrics = classification_metrics(truth, predictions, labels=np.arange(len(encoder.classes_)),
                                       positive_label=positive)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -161,9 +194,11 @@ def main() -> int:
     source_patients, target_patients = source_groups, target_groups
     metadata = {
         "arm": "combat", "seed": args.seed, "timestamp_utc": timestamp,
-        "device": str(device), "source_file_sha256": sha256(source_path),
-        "target_file_sha256": sha256(target_path), "source_file": str(source_path),
+        "device": str(device), "source_file_sha256": source_file_hash,
+        "target_file_sha256": target_file_hash, "source_file": str(source_path),
         "target_file": str(target_path), "source_excluded_sample_ids": excluded_ids,
+        "python_source_tree_sha256": source_tree_hash,
+        "environment_lock_sha256": environment_lock_hash,
         "source_patient_count": int(np.unique(source_patients).size),
         "target_patient_count": int(np.unique(target_patients).size),
         "source_train_n": int(len(splits.source_train)),
@@ -175,19 +210,35 @@ def main() -> int:
         "source_features_used": int(len(shared_genes)),
         "target_features_used": int(len(shared_genes)),
         "shared_genes_retained": int(len(shared_genes)),
+        "preprocessing_policy": {
+            "variance_filter": "stable rank, discard floor(percentile * feature_count); remove constants",
+            "variance_percentile": float(args.variance_percentile),
+            "variance_tie_break": "stable input gene order",
+            "source_filter_fit_scope": "source training samples only",
+            "target_private_filter_fit_scope": "not fitted",
+            "shared_gene_scaler_fit_scope": "source training samples only",
+            "target_private_scaler_fit_scope": "not fitted",
+            "clip_scaled_values": False,
+        },
         "label_classes": encoder.classes_.tolist(),
         "best_source_validation_epoch": training["best_epoch"],
         "best_source_validation_balanced_accuracy": training["best_validation_score"],
+        "classifier_training": classifier_training,
         "source_validation_history": training["history"],
         "test_metrics": metrics,
+        "target_test_labels_scored": True,
+        "target_label_access_policy": "loaded after held-out prediction for final scoring",
         "combat_fit": combat.fit_metadata,
         "config": {
             **vars(args), "source_validation_threshold": False,
-            "clip_scaled_values": False, "feature_scope": "shared",
+            "clip_scaled_values": False, "shared_scaling_policy": "source",
+            "feature_scope": "shared",
             "kpca_epochs": 0, "regularization_mode": "none",
             "classifier_lr": args.classifier_lr,
         },
     }
+    verify_input_fingerprint(source_path, source_file_hash, "Source")
+    verify_input_fingerprint(target_path, target_file_hash, "Target")
     (run_dir / "metrics.json").write_text(json.dumps(metadata, indent=2) + "\n")
     np.savez_compressed(run_dir / "predictions.npz", sample_ids=ids_t[splits.target_test],
         patient_ids=target_groups[splits.target_test].astype(str), y_true=truth,

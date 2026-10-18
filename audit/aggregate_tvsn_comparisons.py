@@ -47,7 +47,9 @@ def adaptation_method_signature(pair: dict[str, Any]) -> tuple[Any, ...]:
     method = methods["comparison"]
     required = (
         "regularization_mode", "kpca_epochs", "kpca_lr", "kpca_gamma",
-        "lambda_reg_setting", "lambda_grid_setting", "align_shared_genes",
+        "effective_mmd_gamma",
+        "lambda_reg_setting", "lambda_grid_setting",
+        "align_shared_genes",
         "anchor_shared_pixels",
     )
     missing = [key for key in required if key not in method]
@@ -58,11 +60,24 @@ def adaptation_method_signature(pair: dict[str, Any]) -> tuple[Any, ...]:
         )
     if not method["regularization_mode"]:
         raise ValueError("Every comparison must record its regularization mode")
+    gamma = method["effective_mmd_gamma"]
+    if gamma is None or not np.isfinite(float(gamma)) or float(gamma) <= 0:
+        raise ValueError("Every comparison must record a finite positive effective MMD gamma")
+    # Missing means automatic gamma in legacy artifacts: the old runner had
+    # no fixed-bandwidth CLI and always enabled the median-distance heuristic.
+    gamma_setting = method.get("mmd_gamma_setting")
+    if gamma_setting is not None:
+        if not np.isfinite(float(gamma_setting)) or float(gamma_setting) <= 0:
+            raise ValueError("A fixed MMD gamma setting must be finite and strictly positive")
+        if not np.isclose(float(gamma_setting), float(gamma), rtol=1e-12, atol=0.0):
+            raise ValueError("Fixed MMD gamma setting differs from the effective bandwidth")
     return (
         method["regularization_mode"], effective_alignment_weight(method),
         method["kpca_epochs"], method["kpca_lr"], method["kpca_gamma"],
+        None if gamma_setting is None else float(gamma_setting),
         method["lambda_reg_setting"], method["lambda_grid_setting"],
         method["align_shared_genes"], method["anchor_shared_pixels"],
+        method.get("kpca_optimization_device", "cpu"),
     )
 
 
@@ -139,10 +154,17 @@ def aggregate(paths: list[Path]) -> dict[str, Any]:
             "kpca_epochs": reference_method[2],
             "kpca_lr": reference_method[3],
             "kpca_gamma": reference_method[4],
-            "lambda_reg_setting": reference_method[5],
-            "lambda_grid_setting": reference_method[6],
-            "align_shared_genes": reference_method[7],
-            "anchor_shared_pixels": reference_method[8],
+            "mmd_gamma_setting": reference_method[5],
+            "mmd_gamma_policy": ("automatic median-distance heuristic"
+                                 if reference_method[5] is None else "fixed"),
+            "lambda_reg_setting": reference_method[6],
+            "lambda_grid_setting": reference_method[7],
+            "align_shared_genes": reference_method[8],
+            "anchor_shared_pixels": reference_method[9],
+            "effective_mmd_gamma_by_seed": {
+                str(pair["seed"]): float(pair["method_configurations"]["comparison"]["effective_mmd_gamma"])
+                for pair in pairs
+            },
             "alignment_weight_note": (
                 "Missing weights in early artifacts are interpreted as 1.0 because their "
                 "archived objective was MMD + lambda * regularizer."

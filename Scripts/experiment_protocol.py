@@ -17,6 +17,26 @@ from sklearn.model_selection import GroupShuffleSplit, StratifiedGroupKFold
 from sklearn.preprocessing import MinMaxScaler
 
 
+def rank_variance_keep_mask(values: np.ndarray, percentile: float = 30.0) -> np.ndarray:
+    """Keep features under the canonical deterministic low-variance policy.
+
+    Variance is computed over rows (samples). Exactly ``floor(p * n / 100)``
+    lowest-variance features are discarded, ties follow input order, and
+    constant features are always removed. Exposing this helper lets all
+    experiment arms, including ComBat, use the same feature policy.
+    """
+    if not 0.0 <= percentile < 100.0:
+        raise ValueError("percentile must be in [0, 100)")
+    variance = np.var(np.asarray(values, dtype=float), axis=0)
+    if variance.ndim != 1 or variance.size == 0 or not np.isfinite(variance).all():
+        raise ValueError("Variance filtering requires finite, non-empty feature values")
+    keep = variance > 0.0
+    discard = int(np.floor(variance.size * percentile / 100.0))
+    order = np.argsort(variance, kind="stable")
+    keep[order[:discard]] = False
+    return keep
+
+
 @dataclass(frozen=True)
 class PatientSplits:
     """Row indices for disjoint source train/validation and target partitions."""
@@ -207,21 +227,29 @@ def ordered_common_gene_indices(
 class GeneAwareMinMax:
     """Fit permissible gene-wise scaling without reading target-test values.
 
-    Shared genes use source-training min/max parameters. Target-only genes use
-    target-adaptation min/max parameters because no source statistic exists for
-    them. By default, values outside a fitted range remain outside [0, 1]; the
-    optional clipping mode bounds transformed values for image pipelines whose
-    input contract requires unit-range intensities. Each domain retains its own
-    ordered gene matrix; shared identifiers can be matched later with
+    Shared genes use source-training min/max parameters by default. The
+    explicit ``target_adaptation`` ablation instead fits shared-gene extrema on
+    unlabeled target-adaptation rows and applies that same scaler to source,
+    adaptation and held-out target rows. Target-only genes use
+    target-adaptation extrema because no source statistic exists for them. By
+    default, values outside a fitted range remain outside [0, 1]; optional
+    clipping bounds transformed values. Each domain retains its own ordered
+    gene matrix; shared identifiers can be matched later with
     :func:`ordered_common_gene_indices`.
     """
 
     def __init__(self, variance_percentile: float = 30.0,
-                 clip_scaled_values: bool = False) -> None:
+                 clip_scaled_values: bool = False,
+                 shared_scaling_policy: str = "source") -> None:
         if not 0.0 <= variance_percentile < 100.0:
             raise ValueError("variance_percentile must be in [0, 100)")
+        if shared_scaling_policy not in {"source", "target_adaptation"}:
+            raise ValueError(
+                "shared_scaling_policy must be 'source' or 'target_adaptation'"
+            )
         self.variance_percentile = float(variance_percentile)
         self.clip_scaled_values = bool(clip_scaled_values)
+        self.shared_scaling_policy = shared_scaling_policy
         self.source_genes_: Optional[np.ndarray] = None
         self.target_genes_: Optional[np.ndarray] = None
         self.source_genes_original_: Optional[np.ndarray] = None
@@ -230,7 +258,11 @@ class GeneAwareMinMax:
         self.target_keep_: Optional[np.ndarray] = None
         self.source_scaler_: Optional[MinMaxScaler] = None
         self.target_private_scaler_: Optional[MinMaxScaler] = None
+        self.shared_scaler_: Optional[MinMaxScaler] = None
         self.shared_genes_: Optional[np.ndarray] = None
+        self._source_shared_scaler_indices: np.ndarray = np.array([], dtype=int)
+        self._target_shared_scaler_indices: np.ndarray = np.array([], dtype=int)
+        self._source_shared_output_indices: np.ndarray = np.array([], dtype=int)
         self._target_to_source: dict[Hashable, int] = {}
         self._target_private: np.ndarray = np.array([], dtype=int)
 
@@ -248,27 +280,7 @@ class GeneAwareMinMax:
 
     @staticmethod
     def _variance_keep_mask(values: np.ndarray, percentile: float) -> np.ndarray:
-        """Drop the requested low-variance fraction with stable tie handling.
-
-        A threshold comparison such as ``variance >= percentile_cutoff`` can
-        retain far more than the requested fraction when many genes tie at the
-        cutoff (especially constant genes at zero). Rank selection makes the
-        retained count deterministic: tied genes follow input order, constant
-        genes are always removed, and the discarded count is rounded down.
-        Constant genes count toward the requested discard fraction; if there
-        are more constants than that fraction, all constants are removed and
-        the retained fraction can be lower.
-        """
-        variance = np.var(np.asarray(values, dtype=float), axis=0)
-        if variance.ndim != 1 or variance.size == 0 or not np.isfinite(variance).all():
-            raise ValueError("Variance filtering requires finite, non-empty feature values")
-        keep = variance > 0.0
-        discard = int(np.floor(variance.size * percentile / 100.0))
-        # Stable sorting makes the policy for tied variances explicit and
-        # reproducible across runs and platforms.
-        order = np.argsort(variance, kind="stable")
-        keep[order[:discard]] = False
-        return keep
+        return rank_variance_keep_mask(values, percentile)
 
     def fit(
         self,
@@ -292,8 +304,32 @@ class GeneAwareMinMax:
         self.source_genes_ = sg[self.source_keep_]
         self.source_scaler_ = MinMaxScaler().fit(source[:, self.source_keep_])
         source_positions = {gene: i for i, gene in enumerate(self.source_genes_.tolist())}
+        source_original_positions = {
+            gene: i for i, gene in enumerate(self.source_genes_original_.tolist())
+        }
 
         shared = [gene for gene in tg.tolist() if gene in source_positions]
+        self.shared_genes_ = np.asarray(shared, dtype=object)
+        self._target_shared_scaler_indices = np.asarray(
+            [i for i, gene in enumerate(tg.tolist()) if gene in source_positions],
+            dtype=int,
+        )
+        self._source_shared_scaler_indices = np.asarray(
+            [source_original_positions[gene] for gene in shared], dtype=int
+        )
+        self._source_shared_output_indices = np.asarray(
+            [source_positions[gene] for gene in shared], dtype=int
+        )
+        if self.shared_scaling_policy == "target_adaptation":
+            if not shared:
+                raise ValueError(
+                    "Target-adaptation shared scaling requires at least one shared gene"
+                )
+            self.shared_scaler_ = MinMaxScaler().fit(
+                target[:, self._target_shared_scaler_indices]
+            )
+        else:
+            self.shared_scaler_ = None
         private = [i for i, gene in enumerate(tg.tolist()) if gene not in source_positions]
         target_private = target[:, private] if private else np.empty((target.shape[0], 0))
         if private:
@@ -308,14 +344,14 @@ class GeneAwareMinMax:
             self.target_private_scaler_ = None
 
         keep_target = np.zeros(tg.size, dtype=bool)
+        target_private_set = set(self._target_private.tolist())
         for i, gene in enumerate(tg.tolist()):
-            if gene in source_positions or i in set(self._target_private.tolist()):
+            if gene in source_positions or i in target_private_set:
                 keep_target[i] = True
         if not keep_target.any():
             raise ValueError("Target gene policy retained no features")
         self.target_keep_ = keep_target
         self.target_genes_ = tg[keep_target]
-        self.shared_genes_ = np.asarray(shared, dtype=object)
         self._target_to_source = source_positions
         return self
 
@@ -334,6 +370,10 @@ class GeneAwareMinMax:
         """
         source, sg = self._check_matrix(X_source_train, source_genes,
                                         "X_source_train")
+        if self.shared_scaling_policy != "source":
+            raise ValueError(
+                "The source-only DeepInsight fit cannot use target-adaptation scaling"
+            )
         tg = np.asarray(target_genes, dtype=object)
         if tg.ndim != 1 or tg.size == 0:
             raise ValueError("target_genes must be a non-empty one-dimensional sequence")
@@ -356,9 +396,24 @@ class GeneAwareMinMax:
             raise ValueError("No retained source genes are shared with target")
         self.target_genes_ = tg[self.target_keep_]
         self.shared_genes_ = self.target_genes_.copy()
+        self.shared_scaler_ = None
         self._target_to_source = {
             gene: index for index, gene in enumerate(self.source_genes_.tolist())
         }
+        source_original_positions = {
+            gene: index for index, gene in enumerate(self.source_genes_original_.tolist())
+        }
+        self._target_shared_scaler_indices = np.arange(
+            self.target_genes_.size, dtype=int
+        )
+        self._source_shared_scaler_indices = np.asarray(
+            [source_original_positions[gene] for gene in self.shared_genes_.tolist()],
+            dtype=int,
+        )
+        self._source_shared_output_indices = np.asarray(
+            [self._target_to_source[gene] for gene in self.shared_genes_.tolist()],
+            dtype=int,
+        )
         self._target_private = np.array([], dtype=int)
         self.target_private_scaler_ = None
         return self
@@ -369,6 +424,12 @@ class GeneAwareMinMax:
         if not np.array_equal(names, self.source_genes_original_):
             raise ValueError("Source genes/order differ from the fitted input")
         scaled = self.source_scaler_.transform(matrix[:, self.source_keep_])
+        shared_scaler = getattr(self, "shared_scaler_", None)
+        if shared_scaler is not None:
+            shared_scaled = shared_scaler.transform(
+                matrix[:, self._source_shared_scaler_indices]
+            )
+            scaled[:, self._source_shared_output_indices] = shared_scaled
         return np.clip(scaled, 0.0, 1.0) if self.clip_scaled_values else scaled
 
     def transform_target(self, X: np.ndarray, genes: Sequence[Hashable]) -> np.ndarray:
@@ -386,11 +447,27 @@ class GeneAwareMinMax:
                 original_idx: private_scaled[:, local_idx]
                 for local_idx, original_idx in enumerate(private_order)
             }
+        shared_scaler = getattr(self, "shared_scaler_", None)
+        if shared_scaler is not None:
+            shared_scaled = shared_scaler.transform(
+                matrix[:, self._target_shared_scaler_indices]
+            )
+            shared_scaled_by_index = {
+                original_idx: shared_scaled[:, local_idx]
+                for local_idx, original_idx in enumerate(
+                    self._target_shared_scaler_indices.tolist()
+                )
+            }
+        else:
+            shared_scaled_by_index = {}
         for i, gene in enumerate(names.tolist()):
             if gene in source_positions:
-                source_idx = source_positions[gene]
-                columns.append(matrix[:, i] * self.source_scaler_.scale_[source_idx]
-                               + self.source_scaler_.min_[source_idx])
+                if shared_scaler is not None:
+                    columns.append(shared_scaled_by_index[i])
+                else:
+                    source_idx = source_positions[gene]
+                    columns.append(matrix[:, i] * self.source_scaler_.scale_[source_idx]
+                                   + self.source_scaler_.min_[source_idx])
             elif i in private_set:
                 columns.append(private_scaled_by_index[i])
         scaled = np.column_stack(columns)

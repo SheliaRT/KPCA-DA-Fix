@@ -1,0 +1,52 @@
+{
+  "name": "gse183947_paper_mmd_gamma_comparison_seed56",
+  "task_name": "tvsn",
+  "seed": 56,
+  "source_path": "Data/TvsN/TCGA_BRCA_NvT_new.csv",
+  "target_path": "Data/TvsN/GSE183947_TvsN_official_60.csv",
+  "target_patient_map": "audit/gse183947_patient_map.json",
+  "common_options": {
+    "--feature-scope": "all",
+    "--variance-percentile": 30,
+    "--model": "resnet50d",
+    "--regularization-mode": "trace",
+    "--shared-scaling-policy": "source"
+  },
+  "allowed_config_differences": [
+    "arm",
+    "mmd_gamma",
+    "lambda_reg"
+  ],
+  "runs": [
+    {
+      "name": "baseline_auto_reference",
+      "arm": "baseline",
+      "variant": "zero-optimization KPCA map reference; MMD bandwidth does not affect this arm",
+      "options": {}
+    },
+    {
+      "name": "kpcada_auto_gamma_tuned_lambda",
+      "arm": "kpcada",
+      "variant": "automatic median-distance MMD gamma with the frozen six-value label-free lambda search",
+      "options": {}
+    },
+    {
+      "name": "kpcada_fixed_paper_gamma_tuned_lambda",
+      "arm": "kpcada",
+      "variant": "paper-reported TCGA-to-GEO MMD gamma 965.55 with the same label-free lambda search",
+      "options": {
+        "--mmd-gamma": 965.55
+      }
+    },
+    {
+      "name": "kpcada_fixed_paper_gamma_lambda",
+      "arm": "kpcada",
+      "variant": "paper-reported TCGA-to-GEO MMD gamma 965.55 and lambda 0.001",
+      "options": {
+        "--mmd-gamma": 965.55,
+        "--lambda-reg": 0.001
+      }
+    }
+  ],
+  "evaluation_role": "External development comparison on GSE183947. The cohort is not the paper's GSE45498 cohort; the paper-reported gamma is tested for transport. All target-test labels remain withheld until the frozen grid completes. The automatic-versus-fixed gamma pair isolates bandwidth under the same lambda search; the fixed gamma+lambda run separately tests the reported pair."
+}

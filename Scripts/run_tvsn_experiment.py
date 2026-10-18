@@ -42,12 +42,13 @@ import sys
 sys.path.insert(0, str(ROOT / "Scripts"))
 
 from evaluation_protocol import (balanced_class_weights, classification_metrics,
+                                 configure_trainable_parameters,
                                  fit_with_validation, select_binary_threshold)
 from experiment_protocol import (GeneAwareMinMax, make_patient_splits,
                                  ordered_common_gene_indices,
                                  patient_group_ids, patient_groups_from_mapping,
                                  transform_target_to_images)
-from kpcada import load_expression_dataset
+from kpcada import load_expression_dataset, load_labels
 from pyDeepInsightv3.image_transformer import ImageTransformer
 from pyDeepInsightv3.image_transformer_new import DomainAdaptiveImageTransformer
 
@@ -58,6 +59,15 @@ def sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def verify_input_fingerprint(path: Path, expected: str, role: str) -> None:
+    """Fail if an input file changed after its arrays were loaded."""
+    actual = sha256(path)
+    if actual != expected:
+        raise RuntimeError(
+            f"{role} input changed during the run; refusing to save a mixed-data artifact"
+        )
 
 
 def python_source_tree_sha256() -> str:
@@ -268,7 +278,30 @@ def classifier_input_diagnostics(images: np.ndarray) -> dict[str, Any]:
     }
 
 
+def resolve_mmd_gamma(
+    requested: float | None, *, arm: str = "kpcada"
+) -> tuple[float, bool]:
+    """Resolve a fixed MMD bandwidth or the supplement median heuristic."""
+    if requested is not None and arm != "kpcada":
+        raise ValueError("--mmd-gamma is only valid for the kpcada arm")
+    if requested is None:
+        return 0.5, True
+    if not np.isfinite(requested) or requested <= 0:
+        raise ValueError("--mmd-gamma must be finite and strictly positive")
+    return float(requested), False
+
+
+def resolve_effective_regularization_mode(arm: str, requested: str) -> str:
+    """A zero-step KPCA baseline has no active regularizer to evaluate."""
+    if arm == "baseline":
+        return "none"
+    if requested not in {"trace", "reference", "none"}:
+        raise ValueError("regularization mode must be trace, reference, or none")
+    return requested
+
+
 def run(args: argparse.Namespace) -> Path | None:
+    mmd_gamma, auto_gamma = resolve_mmd_gamma(args.mmd_gamma, arm=args.arm)
     set_seed(args.seed)
     source_tree_hash = python_source_tree_sha256()
     environment_lock_path = ROOT / "audit" / "environment.lock.txt"
@@ -281,13 +314,16 @@ def run(args: argparse.Namespace) -> Path | None:
         source_path = ROOT / source_path
     if not target_path.is_absolute():
         target_path = ROOT / target_path
+    source_file_hash = sha256(source_path)
+    target_file_hash = sha256(target_path)
     Xs_gxp, genes_s, ids_s, y_s = load_expression_dataset(str(source_path))
-    target_labels_needed = not (
-        args.withhold_target_test_labels or args.preflight_only or args.split_only
-    )
     Xt_gxp, genes_t, ids_t, y_t = load_expression_dataset(
-        str(target_path), include_labels=target_labels_needed
+        str(target_path), include_labels=False
     )
+    verify_input_fingerprint(source_path, source_file_hash, "Source")
+    verify_input_fingerprint(target_path, target_file_hash, "Target")
+    if y_t is not None:
+        raise RuntimeError("Unlabeled target loading unexpectedly returned labels")
     ids_s = np.asarray(ids_s, dtype=str)
     ids_t = np.asarray(ids_t, dtype=str)
     original_source_sample_count = int(len(y_s))
@@ -328,9 +364,13 @@ def run(args: argparse.Namespace) -> Path | None:
             & set(target_patient_groups[splits.target_test].tolist())):
         raise RuntimeError("Target patient groups crossed adaptation/test")
     if args.split_only:
+        verify_input_fingerprint(source_path, source_file_hash, "Source")
+        verify_input_fingerprint(target_path, target_file_hash, "Target")
         split_report = {
             "result": "patient split validation passed",
             "task_name": args.task_name,
+            "source_file_sha256": source_file_hash,
+            "target_file_sha256": target_file_hash,
             "python_source_tree_sha256": source_tree_hash,
             "environment_lock_sha256": environment_lock_hash,
             "source_sample_count": int(len(y_s)),
@@ -367,9 +407,14 @@ def run(args: argparse.Namespace) -> Path | None:
     )
     if raw_deepinsight and args.feature_scope != "shared":
         raise ValueError("The raw DeepInsight baseline requires --feature-scope shared")
+    if raw_deepinsight and args.shared_scaling_policy != "source":
+        raise ValueError(
+            "The inductive raw DeepInsight baseline requires source-fitted shared scaling"
+        )
     preprocessing = GeneAwareMinMax(
         args.variance_percentile,
         clip_scaled_values=args.clip_scaled_values,
+        shared_scaling_policy=args.shared_scaling_policy,
     )
     if raw_deepinsight:
         preprocessing.fit_source_shared(Xs_train, genes_s, genes_t)
@@ -406,6 +451,9 @@ def run(args: argparse.Namespace) -> Path | None:
     ys_train_enc = encoder.transform(ys_train)
     ys_val_enc = encoder.transform(ys_val)
     epochs = 0 if args.arm == "baseline" or raw_deepinsight else args.kpca_epochs
+    effective_regularization_mode = resolve_effective_regularization_mode(
+        args.arm, args.regularization_mode
+    )
     lambda_grid = tuple(args.lambda_grid or DEFAULT_LAMBDA_GRID)
     if not lambda_grid or any(not np.isfinite(value) or value < 0 for value in lambda_grid):
         raise ValueError("Lambda candidates must be finite and nonnegative")
@@ -450,14 +498,16 @@ def run(args: argparse.Namespace) -> Path | None:
                 "n_components": 2,
                 "kernel": "rbf",
                 "kpca_gamma": args.kpca_gamma,
-                "auto_gamma": True,
+                "mmd_gamma": mmd_gamma,
+                "auto_gamma": auto_gamma,
                 "lambda_reg": configured_lambda,
                 "alignment_weight": args.alignment_weight,
                 "lr": args.kpca_lr,
                 "epochs": epochs,
-                "regularization_mode": args.regularization_mode,
+                "regularization_mode": effective_regularization_mode,
                 "kpca_random_state": args.seed,
                 "align_shared_genes": args.align_shared_genes,
+                "optimization_device": args.kpca_optimization_device,
                 "verbose": args.verbose_kpca,
             },
             pixels=(args.image_size, args.image_size),
@@ -493,9 +543,13 @@ def run(args: argparse.Namespace) -> Path | None:
         }
 
     if args.preflight_only:
+        verify_input_fingerprint(source_path, source_file_hash, "Source")
+        verify_input_fingerprint(target_path, target_file_hash, "Target")
         print(json.dumps({
             "result": "preflight passed",
             "arm": args.arm,
+            "source_file_sha256": source_file_hash,
+            "target_file_sha256": target_file_hash,
             "python_source_tree_sha256": source_tree_hash,
             "environment_lock_sha256": environment_lock_hash,
             "kpca_epochs_run": epochs,
@@ -521,6 +575,7 @@ def run(args: argparse.Namespace) -> Path | None:
                 "target_test": classifier_input_diagnostics(test_images),
             },
             "clip_scaled_values": bool(args.clip_scaled_values),
+            "shared_scaling_policy": args.shared_scaling_policy,
             "note": "No classifier was constructed or trained; target-test labels were not accessed.",
         }, indent=2))
         return None
@@ -530,6 +585,9 @@ def run(args: argparse.Namespace) -> Path | None:
         args.model, pretrained=not args.no_pretrained,
         num_classes=len(encoder.classes_),
     ).to(device)
+    classifier_training = configure_trainable_parameters(
+        model, freeze_backbone=args.freeze_backbone
+    )
     preprocess_image = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406],
@@ -553,7 +611,8 @@ def run(args: argparse.Namespace) -> Path | None:
                 if loss_weights is not None else None)
     )
     optimizer = torch.optim.AdamW(
-        model.parameters(), lr=args.classifier_lr,
+        (parameter for parameter in model.parameters() if parameter.requires_grad),
+        lr=args.classifier_lr,
         weight_decay=args.weight_decay,
     )
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -564,6 +623,7 @@ def run(args: argparse.Namespace) -> Path | None:
         scheduler=scheduler, max_epochs=args.classifier_epochs,
         patience=args.early_stopping_patience,
         monitor="balanced_accuracy",
+        freeze_batchnorm_stats=args.freeze_backbone,
     )
 
     positive_label = (
@@ -592,9 +652,10 @@ def run(args: argparse.Namespace) -> Path | None:
             positive_label=positive_label, negative_label=negative_label,
         )
 
-    # The test loader carries images only. In ordinary final-evaluation mode,
-    # labels enter only after checkpoint selection; development runs can
-    # withhold them entirely with --withhold-target-test-labels.
+    # The test loader carries images only. Target labels have not been parsed
+    # during preprocessing, fitting, selection or prediction. Ordinary final
+    # evaluation loads them only now; development runs can withhold them
+    # entirely with --withhold-target-test-labels.
     model.eval()
     predictions: list[int] = []
     probabilities: list[list[float]] = []
@@ -612,7 +673,12 @@ def run(args: argparse.Namespace) -> Path | None:
     target_test_labels = None
     metrics = None
     if not args.withhold_target_test_labels:
-        target_test_labels = encoder.transform(y_t[splits.target_test])
+        verify_input_fingerprint(target_path, target_file_hash, "Target")
+        target_labels = load_labels(str(target_path))
+        verify_input_fingerprint(target_path, target_file_hash, "Target")
+        if target_labels.shape != ids_t.shape:
+            raise ValueError("Target label count does not match the unlabeled sample IDs")
+        target_test_labels = encoder.transform(target_labels[splits.target_test])
         metrics = classification_metrics(
             target_test_labels,
             predictions,
@@ -644,8 +710,8 @@ def run(args: argparse.Namespace) -> Path | None:
         "environment_lock_sha256": environment_lock_hash,
         "timestamp_utc": timestamp,
         "device": str(device),
-        "source_file_sha256": sha256(source_path),
-        "target_file_sha256": sha256(target_path),
+        "source_file_sha256": source_file_hash,
+        "target_file_sha256": target_file_hash,
         "source_file": str(source_path.relative_to(ROOT) if source_path.is_relative_to(ROOT) else source_path),
         "target_file": str(target_path.relative_to(ROOT) if target_path.is_relative_to(ROOT) else target_path),
         "source_sample_count_before_exclusions": original_source_sample_count,
@@ -679,7 +745,11 @@ def run(args: argparse.Namespace) -> Path | None:
             "target_private_filter_fit_scope": (
                 "target adaptation samples only" if not raw_deepinsight else "not fitted"
             ),
-            "shared_gene_scaler_fit_scope": "source training samples only",
+            "shared_gene_scaler_fit_scope": (
+                "target adaptation samples only"
+                if args.shared_scaling_policy == "target_adaptation"
+                else "source training samples only"
+            ),
             "target_private_scaler_fit_scope": (
                 "target adaptation samples only" if not raw_deepinsight else "not fitted"
             ),
@@ -731,16 +801,25 @@ def run(args: argparse.Namespace) -> Path | None:
         ),
         "lambda_selection": (
             {
-                "rule": "lowest final full empirical MMD squared; target labels unused",
+                "rule": lambda_selection["selection_policy"],
                 "candidates": lambda_selection["results"],
+                "rejected_candidates": lambda_selection["rejected_candidates"],
                 "selected_lambda": float(lambda_selection["best_lambda_mmd"]),
             }
             if lambda_selection is not None else None
         ),
         "label_classes": encoder.classes_.tolist(),
         "kpca_epochs": epochs,
+        "kpca_optimization_device_requested": (
+            args.kpca_optimization_device if not raw_deepinsight else None
+        ),
+        "kpca_optimization_device": (
+            transformer._kpca_da.optimization_device_
+            if not raw_deepinsight else None
+        ),
         "best_source_validation_epoch": training["best_epoch"],
         "best_source_validation_balanced_accuracy": training["best_validation_score"],
+        "classifier_training": classifier_training,
         "decision_threshold": (
             {"selection": "source-validation balanced accuracy",
              "positive_class": str(encoder.classes_[positive_label]),
@@ -755,9 +834,15 @@ def run(args: argparse.Namespace) -> Path | None:
         "source_validation_history": training["history"],
         "geometry_diagnostics": geometry,
         "target_test_labels_scored": target_test_labels is not None,
+        "target_label_access_policy": (
+            "withheld" if args.withhold_target_test_labels
+            else "loaded after held-out prediction for final scoring"
+        ),
         "config": vars(args),
         "test_metrics": metrics,
     }
+    verify_input_fingerprint(source_path, source_file_hash, "Source")
+    verify_input_fingerprint(target_path, target_file_hash, "Target")
     (run_dir / "metrics.json").write_text(json.dumps(metadata, indent=2) + "\n")
     prediction_fields = {
         "sample_ids": ids_t[splits.target_test],
@@ -780,6 +865,11 @@ def run(args: argparse.Namespace) -> Path | None:
         target_test_patient=target_patient_groups[splits.target_test].astype(str),
         feature_map_source_train=representation_fit_source_ids.astype(str),
         feature_map_target_adaptation=representation_fit_target_ids.astype(str),
+        shared_scaler_fit_sample_ids=(
+            ids_t[splits.target_adapt].astype(str)
+            if args.shared_scaling_policy == "target_adaptation"
+            else ids_s[splits.source_train].astype(str)
+        ),
     )
     torch.save(training["model"].state_dict(), run_dir / "best_model.pt")
     with (run_dir / "fitted_preprocessing_and_map.pkl").open("wb") as handle:
@@ -796,7 +886,7 @@ def run(args: argparse.Namespace) -> Path | None:
     return run_dir
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--arm", choices=("baseline", "kpcada", "raw_deepinsight"), required=True)
     parser.add_argument("--seed", type=int, default=42)
@@ -824,10 +914,19 @@ def parse_args() -> argparse.Namespace:
                         help="discard this source-training variance percentile (supplement specifies 30)")
     parser.add_argument("--clip-scaled-values", action="store_true",
                         help="clip transformed values to [0, 1] after fitting scalers on permitted training/adaptation data")
+    parser.add_argument("--shared-scaling-policy",
+                        choices=("source", "target_adaptation"), default="source",
+                        help="fit shared-gene MinMax extrema on source training (paper comparator) or unlabeled target-adaptation rows (development ablation)")
     parser.add_argument("--feature-scope", choices=("all", "shared"), default="all",
                         help="all retained features (paper-like) or shared genes only (cohort-coverage ablation)")
     parser.add_argument("--kpca-epochs", type=int, default=500)
-    parser.add_argument("--kpca-gamma", type=float, default=0.2)
+    parser.add_argument("--kpca-optimization-device", choices=("auto", "cpu", "cuda", "mps"),
+                        default="auto",
+                        help="device for the differentiable KPCA-DA objective; auto prefers CUDA, then Apple MPS, then CPU")
+    parser.add_argument("--kpca-gamma", type=float, default=0.2,
+                        help="RBF bandwidth for the separate source/target KernelPCA fits")
+    parser.add_argument("--mmd-gamma", type=float, default=None,
+                        help="fixed MMD RBF bandwidth; omit to use the supplement median-distance heuristic")
     parser.add_argument("--lambda-reg", type=float, default=None,
                         help="fixed lambda; omit for label-free candidate selection")
     parser.add_argument("--alignment-weight", type=float, default=1.0,
@@ -857,10 +956,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--class-weighted-loss", action="store_true",
                         help="weight source-training classes inversely by count; method ablation selected with the same source-validation rule")
     parser.add_argument("--no-pretrained", action="store_true")
+    parser.add_argument("--freeze-backbone", action="store_true",
+                        help="train only the classifier head and freeze backbone BatchNorm statistics (development ablation)")
     parser.add_argument("--verbose-kpca", action="store_true")
     parser.add_argument("--preflight-only", action="store_true",
                         help="fit the coordinate mapper and build images, but do not train a classifier")
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 if __name__ == "__main__":

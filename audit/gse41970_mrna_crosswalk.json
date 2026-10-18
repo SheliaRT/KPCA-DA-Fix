@@ -62,7 +62,16 @@
     "series_matrix_sample_ids_identical": true,
     "series_matrix_sample_metadata_identical": true,
     "primary_and_normal_mRNA_samples_in_GEO": 200,
-    "GEO_primary_tumor_count_minus_paper_mRNA_tumor_count": 2
+    "GEO_primary_tumor_count_minus_paper_mRNA_tumor_count": 2,
+    "GEO_tumor_profile_count": 160,
+    "GEO_unique_tumor_patient_count": 158,
+    "additional_profiles_from_repeated_tumor_patients": 2,
+    "repeated_tumor_patient_ids": [
+      "91",
+      "101"
+    ],
+    "paper_tumor_count_matches_unique_GEO_tumor_patients": true,
+    "paper_counting_unit_confirmed_as_patients": false
   },
-  "interpretation": "The 224 count is reported for the paper's miRNA tumor/normal cohort. The public GPL16299 mRNA deposits contain a distinct tissue-class composition. GSE41970 and GSE45498 are identical mRNA supplements after decompression; the public primary/normal mRNA subset has 200 samples, while the source article reports 198 mRNA tumor/normal samples (158 tumor, 40 normal). The two-tumor difference is not resolved by the public sample metadata and requires the authors' inclusion/QC manifest."
+  "interpretation": "The 224 count is reported for the paper's miRNA tumor/normal cohort. The public GPL16299 mRNA deposits contain a distinct tissue-class composition. GSE41970 and GSE45498 are identical mRNA supplements after decompression; the public primary/normal mRNA subset has 200 profiles. GEO contains 160 primary tumor profiles from 158 patient IDs: patients 91 and 101 each have two separately named tumor profiles. The article reports 158 tumors and 40 normals for mRNA profiling, so its tumor count is numerically consistent with a count of unique GEO tumor patients. This is a plausible reconciliation, not a proven one: the article's counting unit and profile-level inclusion/QC manifest are unavailable. Do not drop the repeated-patient profiles or claim exact sample-level replication without that source evidence."
 }

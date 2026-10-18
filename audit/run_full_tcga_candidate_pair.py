@@ -32,7 +32,8 @@ def wait_for_job(job: str) -> None:
 
 def run_arm(arm: str, seed: int, source: str, target: str,
             excluded_labels: list[str], clip_scaled_values: bool,
-            model: str, no_pretrained: bool, feature_scope: str,
+            model: str, no_pretrained: bool, freeze_backbone: bool,
+            feature_scope: str,
             regularization_mode: str, results_root: Path) -> Path:
     task_results = results_root / "tvsn"
     task_results.mkdir(parents=True, exist_ok=True)
@@ -50,6 +51,8 @@ def run_arm(arm: str, seed: int, source: str, target: str,
         command.append("--clip-scaled-values")
     if no_pretrained:
         command.append("--no-pretrained")
+    if freeze_backbone:
+        command.append("--freeze-backbone")
     print("Starting:", " ".join(command), flush=True)
     subprocess.run(command, cwd=ROOT, check=True)
     created = sorted(
@@ -63,7 +66,8 @@ def run_arm(arm: str, seed: int, source: str, target: str,
 
 
 def validate_reusable_baseline(run_dir: Path, *, seed: int, arm: str,
-                               model: str, feature_scope: str) -> Path:
+                               model: str, feature_scope: str,
+                               freeze_backbone: bool) -> Path:
     run_dir = run_dir if run_dir.is_absolute() else ROOT / run_dir
     metadata = json.loads((run_dir / "metrics.json").read_text(encoding="utf-8"))
     config = metadata.get("config", {})
@@ -72,12 +76,14 @@ def validate_reusable_baseline(run_dir: Path, *, seed: int, arm: str,
         "arm": arm,
         "feature_scope": feature_scope,
         "model": model,
+        "freeze_backbone": freeze_backbone,
     }
     actual = {
         "seed": metadata.get("seed"),
         "arm": metadata.get("arm"),
         "feature_scope": metadata.get("feature_scope"),
         "model": config.get("model"),
+        "freeze_backbone": bool(config.get("freeze_backbone", False)),
     }
     if actual != expected:
         raise ValueError(f"Reusable baseline does not match requested pair: {actual} != {expected}")
@@ -101,6 +107,8 @@ def main() -> int:
                         help="matched classifier backbone (use resnet50 to test the paper's named architecture)")
     parser.add_argument("--no-pretrained", action="store_true",
                         help="initialize the matched classifier from random weights")
+    parser.add_argument("--freeze-backbone", action="store_true",
+                        help="matched feature-extractor ablation: train only the classifier head")
     parser.add_argument("--baseline-arm", choices=("baseline", "raw_deepinsight"),
                         default="baseline",
                         help="baseline representation; raw_deepinsight is the paper-style no-alignment arm")
@@ -130,17 +138,20 @@ def main() -> int:
         validate_reusable_baseline(
             args.baseline_run_dir, seed=args.seed, arm=args.baseline_arm,
             model=args.model, feature_scope=args.feature_scope,
+            freeze_backbone=args.freeze_backbone,
         )
         if args.baseline_run_dir is not None
         else run_arm(args.baseline_arm, args.seed, args.source, args.target,
                      args.exclude_source_label, args.clip_scaled_values,
-                     args.model, args.no_pretrained, args.feature_scope,
+                     args.model, args.no_pretrained, args.freeze_backbone,
+                     args.feature_scope,
                      args.regularization_mode,
                      results_root)
     )
     adapted = run_arm("kpcada", args.seed, args.source, args.target,
                       args.exclude_source_label, args.clip_scaled_values,
-                      args.model, args.no_pretrained, args.feature_scope,
+                      args.model, args.no_pretrained, args.freeze_backbone,
+                      args.feature_scope,
                       args.regularization_mode,
                       results_root)
     comparison = ROOT / comparison_value

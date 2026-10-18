@@ -35,10 +35,16 @@
     "kpca_epochs": 500,
     "kpca_lr": 0.001,
     "kpca_gamma": 0.2,
+    "mmd_gamma_setting": null,
+    "mmd_gamma_policy": "automatic median-distance heuristic",
     "lambda_reg_setting": null,
     "lambda_grid_setting": null,
     "align_shared_genes": false,
     "anchor_shared_pixels": false,
+    "effective_mmd_gamma_by_seed": {
+      "46": 7.837519645690918,
+      "47": 7.519105911254883
+    },
     "alignment_weight_note": "Missing weights in early artifacts are interpreted as 1.0 because their archived objective was MMD + lambda * regularizer."
   },
   "arm_metrics_across_seeds": {
@@ -193,19 +199,5 @@
       "total_seeds": 2
     }
   },
-  "interpretation": "Descriptive variability across these fitted splits/seeds. It does not estimate uncertainty over new cohorts; do not select settings using these target metrics and then call the same runs an untouched test.",
-  "comparison_refresh_jobs": {
-    "refresh_seed46_weight_provenance": {
-      "job": "refresh_seed46_weight_provenance",
-      "exit_code": 0,
-      "completed_utc": "2026-10-16T18:34:45+00:00",
-      "log": "audit/refresh_seed46_weight_provenance.log"
-    },
-    "refresh_seed47_weight_provenance": {
-      "job": "refresh_seed47_weight_provenance",
-      "exit_code": 0,
-      "completed_utc": "2026-10-16T18:34:45+00:00",
-      "log": "audit/refresh_seed47_weight_provenance.log"
-    }
-  }
+  "interpretation": "Descriptive variability across these fitted splits/seeds. It does not estimate uncertainty over new cohorts; do not select settings using these target metrics and then call the same runs an untouched test."
 }
